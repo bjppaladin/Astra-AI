@@ -20,6 +20,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import * as XLSX from "xlsx";
 
 // Mock data generation based on the provided excel instructions
@@ -40,6 +47,7 @@ export default function Dashboard() {
   const [data, setData] = useState<typeof mockData>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [strategy, setStrategy] = useState<Strategy>("current");
+  const [commitment, setCommitment] = useState<"monthly" | "annual">("monthly");
 
   const [customRules, setCustomRules] = useState({
     upgradeE1ToE3: true,
@@ -76,6 +84,7 @@ export default function Dashboard() {
       "Mailbox Usage (GB)": Number(u.usageGB.toFixed(1)),
       "Mailbox Max (GB)": u.maxGB,
       "Est. Monthly License Cost": Number(u.cost.toFixed(2)),
+      "Commitment Type": commitment,
       Strategy: strategy,
     }));
 
@@ -159,9 +168,16 @@ export default function Dashboard() {
   );
 
   const baseTotalCost = data.reduce((acc, curr) => acc + curr.cost, 0);
-  const totalCost = optimizedData.reduce((acc, curr) => acc + curr.cost, 0);
-  const costDiff = totalCost - baseTotalCost;
-  
+  const projectedTotalCost = optimizedData.reduce((acc, curr) => acc + curr.cost, 0);
+  const costDiff = projectedTotalCost - baseTotalCost;
+
+  // Simple commitment modeling for the prototype (annual is cheaper per-month)
+  const commitmentMultiplier = commitment === "annual" ? 0.85 : 1;
+  const totalCost = projectedTotalCost * commitmentMultiplier;
+
+  const baseTotalCostCommitted = baseTotalCost * commitmentMultiplier;
+  const costDiffCommitted = totalCost - baseTotalCostCommitted;
+
   const totalUsers = optimizedData.length;
   const totalStorage = optimizedData.reduce((acc, curr) => acc + curr.usageGB, 0);
 
@@ -204,9 +220,32 @@ export default function Dashboard() {
       {/* Main Content */}
       <main className="flex-1 p-8 max-w-7xl mx-auto w-full space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
-        <div className="flex flex-col gap-2">
-          <h2 className="text-3xl font-display font-semibold">Usage & Licensing Dashboard</h2>
-          <p className="text-muted-foreground">Automated merge of Active Users and Mailbox Usage reports with actionable insights.</p>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <h2 className="text-3xl font-display font-semibold">Usage & Licensing Dashboard</h2>
+            <p className="text-muted-foreground">Automated merge of Active Users and Mailbox Usage reports with actionable insights.</p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="font-normal">Billing basis</Badge>
+              <div className="w-full sm:w-[240px]">
+                <Select value={commitment} onValueChange={(v) => setCommitment(v as any)}>
+                  <SelectTrigger className="bg-card" data-testid="select-commitment">
+                    <SelectValue placeholder="Select commitment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="monthly">Monthly commitment</SelectItem>
+                    <SelectItem value="annual">Annual commitment (est. discount)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="text-xs text-muted-foreground max-w-xl">
+              Costs shown are a prototype estimate. Annual commitment applies an estimated per-month discount for comparison.
+            </div>
+          </div>
         </div>
 
         {/* KPIs */}
@@ -252,11 +291,16 @@ export default function Dashboard() {
                   <div className={`text-3xl font-bold font-display ${strategy !== 'current' ? 'text-primary' : ''}`}>
                     ${totalCost.toFixed(2)}
                   </div>
-                  {strategy !== 'current' && (
-                    <div className={`text-sm font-medium mb-1 ${costDiff > 0 ? 'text-amber-500' : 'text-green-500'}`}>
-                      {costDiff > 0 ? '+' : ''}{costDiff.toFixed(2)} /mo
+                  <div className="flex flex-col items-end gap-0.5 mb-1">
+                    <div className="text-xs text-muted-foreground">
+                      {commitment === 'annual' ? 'Annual commitment (est.)' : 'Monthly commitment'}
                     </div>
-                  )}
+                    {strategy !== 'current' && (
+                      <div className={`text-sm font-medium ${costDiffCommitted > 0 ? 'text-amber-500' : 'text-green-500'}`}>
+                        {costDiffCommitted > 0 ? '+' : ''}{costDiffCommitted.toFixed(2)} /mo
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </CardContent>
