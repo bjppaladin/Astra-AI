@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
-import { 
-  RefreshCcw, 
-  Download, 
-  Users, 
-  Database, 
+import {
+  RefreshCcw,
+  Download,
+  Users,
+  Database,
   CreditCard,
   Search,
   Filter,
@@ -12,7 +12,7 @@ import {
   Shield,
   TrendingDown,
   Scale,
-  ArrowRight
+  ArrowRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import * as XLSX from "xlsx";
 
 // Mock data generation based on the provided excel instructions
 const mockData = [
@@ -55,6 +56,26 @@ export default function Dashboard() {
       setData([...mockData].sort(() => Math.random() - 0.5)); // shuffle to simulate refresh
       setIsSyncing(false);
     }, 2000);
+  };
+
+  const handleExportXlsx = () => {
+    const rows = optimizedData.map((u) => ({
+      "Display Name": u.displayName,
+      UPN: u.upn,
+      Department: u.department,
+      Licenses: u.licenses.join("; "),
+      "Mailbox Usage (GB)": Number(u.usageGB.toFixed(1)),
+      "Mailbox Max (GB)": u.maxGB,
+      "Est. Monthly License Cost": Number(u.cost.toFixed(2)),
+      Strategy: strategy,
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Combined Report");
+
+    const fileName = `M365_Insights_${strategy}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    XLSX.writeFile(wb, fileName);
   };
 
   // Apply Optimization Logic
@@ -157,9 +178,9 @@ export default function Dashboard() {
             <RefreshCcw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
             {isSyncing ? 'Syncing...' : 'Sync Graph Data'}
           </Button>
-          <Button size="sm" className="gap-2" data-testid="button-export">
+          <Button size="sm" className="gap-2" onClick={handleExportXlsx} data-testid="button-export">
             <Download className="h-4 w-4" />
-            Export Combined CSV
+            Export XLSX
           </Button>
         </div>
       </header>
