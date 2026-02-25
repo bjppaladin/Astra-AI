@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useLocation } from "wouter";
 import {
   RefreshCcw,
   Download,
@@ -13,6 +14,8 @@ import {
   TrendingDown,
   Scale,
   ArrowRight,
+  FileText,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import * as XLSX from "xlsx";
+import { saveReport } from "@/lib/api";
 
 // Mock data generation based on the provided excel instructions
 const mockData = [
@@ -43,7 +47,9 @@ const mockData = [
 type Strategy = "current" | "security" | "cost" | "balanced" | "custom";
 
 export default function Dashboard() {
+  const [, navigate] = useLocation();
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [data, setData] = useState<typeof mockData>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [strategy, setStrategy] = useState<Strategy>("current");
@@ -167,11 +173,58 @@ export default function Dashboard() {
     item.department.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const applyRules = (rules: typeof customRules) => {
+    return data.map((user) => {
+      let newLicenses = [...user.licenses];
+      let newCost = user.cost;
+      if (rules.upgradeE1ToE3 && newLicenses.includes("Office 365 E1")) {
+        newLicenses = newLicenses.filter((l) => l !== "Office 365 E1");
+        newLicenses.push("Microsoft 365 E3");
+        newCost += 26;
+      }
+      if (rules.upgradeE3ToE5 && newLicenses.includes("Microsoft 365 E3")) {
+        newLicenses = newLicenses.filter((l) => l !== "Microsoft 365 E3");
+        newLicenses.push("Microsoft 365 E5");
+        newCost += 21;
+      }
+      if (rules.downgradeE5ToE3NonCore && newLicenses.includes("Microsoft 365 E5") && !["IT", "Engineering"].includes(user.department)) {
+        newLicenses = newLicenses.filter((l) => l !== "Microsoft 365 E5");
+        newLicenses.push("Microsoft 365 E3");
+        newCost -= 21;
+      }
+      if (rules.removeVisio && newLicenses.includes("Visio Plan 2")) {
+        newLicenses = newLicenses.filter((l) => l !== "Visio Plan 2");
+        newCost -= 15;
+      }
+      if (rules.removeProject && newLicenses.includes("Project Plan 3")) {
+        newLicenses = newLicenses.filter((l) => l !== "Project Plan 3");
+        newCost -= 30;
+      }
+      if (rules.addCopilotEngineering && user.department === "Engineering" && !newLicenses.includes("GitHub Copilot")) {
+        newLicenses.push("GitHub Copilot");
+        newCost += 20;
+      }
+      return { ...user, licenses: newLicenses, cost: newCost };
+    });
+  };
+
+  const costForStrategy = (strat: Strategy) => {
+    if (strat === "current") return data.reduce((a, c) => a + c.cost, 0);
+    const rules = strat === "custom" ? customRules : {
+      upgradeE1ToE3: strat === "security" || strat === "balanced",
+      upgradeE3ToE5: strat === "security",
+      downgradeE5ToE3NonCore: strat === "cost" || strat === "balanced",
+      removeVisio: strat === "cost",
+      removeProject: strat === "cost",
+      addCopilotEngineering: strat === "security",
+    };
+    return applyRules(rules).reduce((a, c) => a + c.cost, 0);
+  };
+
   const baseTotalCost = data.reduce((acc, curr) => acc + curr.cost, 0);
   const projectedTotalCost = optimizedData.reduce((acc, curr) => acc + curr.cost, 0);
   const costDiff = projectedTotalCost - baseTotalCost;
 
-  // Simple commitment modeling for the prototype (annual is cheaper per-month)
   const commitmentMultiplier = commitment === "annual" ? 0.85 : 1;
   const totalCost = projectedTotalCost * commitmentMultiplier;
 
@@ -180,6 +233,44 @@ export default function Dashboard() {
 
   const totalUsers = optimizedData.length;
   const totalStorage = optimizedData.reduce((acc, curr) => acc + curr.usageGB, 0);
+
+  const handleGenerateSummary = async () => {
+    if (data.length === 0) return;
+    setIsGeneratingSummary(true);
+    try {
+      const mul = commitmentMultiplier;
+      const costCurrent = costForStrategy("current") * mul;
+      const costSecurity = costForStrategy("security") * mul;
+      const costSaving = costForStrategy("cost") * mul;
+      const costBalanced = costForStrategy("balanced") * mul;
+      const costCustom = costForStrategy("custom") * mul;
+
+      const report = await saveReport({
+        name: `M365 Report - ${new Date().toLocaleDateString()}`,
+        strategy,
+        commitment,
+        userData: data,
+        customRules: strategy === "custom" ? customRules : undefined,
+      });
+
+      const payload = {
+        costCurrent,
+        costSecurity,
+        costSaving,
+        costBalanced,
+        costCustom,
+        commitment,
+        userData: data,
+      };
+
+      sessionStorage.setItem(`summary_payload_${report.id}`, JSON.stringify(payload));
+      navigate(`/report/${report.id}/summary`);
+    } catch (err) {
+      console.error("Failed to generate summary:", err);
+    } finally {
+      setIsGeneratingSummary(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background flex flex-col font-sans text-foreground">
@@ -213,6 +304,16 @@ export default function Dashboard() {
           <Button size="sm" className="gap-2" onClick={handleExportXlsx} data-testid="button-export">
             <Download className="h-4 w-4" />
             Export XLSX
+          </Button>
+          <Button 
+            size="sm" 
+            className="gap-2 bg-primary"
+            onClick={handleGenerateSummary}
+            disabled={isGeneratingSummary || data.length === 0}
+            data-testid="button-generate-summary"
+          >
+            {isGeneratingSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+            Executive Summary
           </Button>
         </div>
       </header>
