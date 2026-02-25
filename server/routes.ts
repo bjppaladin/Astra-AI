@@ -5,8 +5,8 @@ import OpenAI from "openai";
 import { z } from "zod";
 
 const openrouter = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENROUTER_BASE_URL,
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
 });
 
 export async function registerRoutes(
