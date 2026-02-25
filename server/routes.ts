@@ -4,9 +4,9 @@ import { storage } from "./storage";
 import OpenAI from "openai";
 import { z } from "zod";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+const openrouter = new OpenAI({
+  apiKey: process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENROUTER_BASE_URL,
 });
 
 export async function registerRoutes(
@@ -83,11 +83,11 @@ Write with confidence and authority. Use precise dollar figures. Reference speci
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const stream = await openai.chat.completions.create({
-        model: "gpt-5.2",
+      const stream = await openrouter.chat.completions.create({
+        model: "anthropic/claude-sonnet-4",
         messages: [{ role: "user", content: prompt }],
         stream: true,
-        max_completion_tokens: 4096,
+        max_tokens: 4096,
       });
 
       let fullContent = "";
