@@ -1,0 +1,94 @@
+Excel (users + attributes + Mailbox Usage (GB) + licenses), the simplest way in M365 is:
+	1.	Export Active Users (gives you user fields + license names)
+	2.	Export Mailbox Usage (gives you mailbox size/usage)
+	3.	Merge the two exports in Excel using Power Query (UPN is the join key)
+	4.	(Optional) Add your own “license cost” columns (M365 won’t output your internal $’s automatically)
+
+Here’s the step-by-step.
+
+⸻
+
+A) Export the “Users” list (attributes + licenses)
+	1.	Go to Microsoft 365 admin center.
+	2.	Navigate to Users → Active users.
+	3.	In the command bar, choose Export users (it exports to CSV).
+	4.	Save the CSV somewhere predictable (e.g., ActiveUsers.csv).
+
+This export is what typically provides columns like Display Name, First/Last, UPN, Department, Phone, etc., plus assigned licenses (as names).
+
+⸻
+
+B) Export “Mailbox usage” (mailbox size)
+	1.	In Microsoft 365 admin center, go to Reports → Usage.
+	2.	Click View more under Email activity.
+	3.	In the drop-down, choose Exchange → Mailbox usage.  ￼
+	4.	Click Export to download the report (CSV).
+
+That export gives you the mailbox usage values you want to bring into the master sheet.
+
+⸻
+
+C) Combine them into one report (Excel Power Query)
+
+1) Load both CSVs into Power Query
+	1.	Open Excel → create a new workbook.
+	2.	Go to Data → Get Data → From File → From Text/CSV
+	3.	Select ActiveUsers.csv → click Transform Data (not “Load”).
+	4.	Repeat: Data → Get Data → From Text/CSV → select the Mailbox usage CSV → Transform Data.
+
+2) Normalize the join key (UPN)
+
+In each query:
+	1.	Find the column that represents the user identity:
+	•	In Active Users: usually User principal name
+	•	In Mailbox usage: usually User principal name (or similar)
+	2.	Make sure both are:
+	•	Text type
+	•	Trimmed (Power Query: Transform → Format → Trim)
+	•	Same casing (optional but helpful): Transform → Format → Lowercase
+
+3) Merge (join) the tables
+	1.	In Power Query, select the Active Users query.
+	2.	Home → Merge Queries
+	3.	Choose the mailbox usage query as the second table.
+	4.	Click the UPN column in both tables as the matching key.
+	5.	Join kind: Left Outer (keep all Active Users).
+	6.	Click OK.
+
+4) Expand only what you need
+	1.	You’ll get a new column containing a “table” (the joined results).
+	2.	Click the expand icon and select the mailbox fields you want (ex: Storage used, Mailbox usage, etc.).
+	3.	Rename the column to something like Mailbox Usage (GB).
+
+5) Convert/clean the mailbox usage number
+
+If mailbox usage comes in MB/bytes:
+	•	Add a custom column to convert to GB (Power Query: Add Column → Custom Column)
+Example logic (depends on the source units):
+	•	If MB: =[StorageUsedMB] / 1024
+	•	If bytes: =[StorageUsedBytes] / 1024 / 1024 / 1024
+
+6) Load to Excel
+	1.	Home → Close & Load (to a Table in the workbook).
+
+Now you have a single refreshable report.
+
+⸻
+
+D) About “Existing Cost / New Core Cost” columns
+
+M365 does not natively export your license pricing or “cost per user” the way your spreadsheet shows it. The clean way to recreate those columns is:
+	•	Maintain a small LicenseCostTable (SKU Name → Cost)
+	•	In Power Query, split/normalize the licenses field (if needed)
+	•	Merge costs in, or do it in Excel with XLOOKUP
+
+⸻
+
+E) The “make this dead simple next time” workflow
+
+Once you build the Power Query workbook once:
+	•	Next month you only:
+	1.	Export the two CSVs again (Users + Mailbox usage)
+	2.	Overwrite the old CSV files (same filenames)
+	3.	Open the Excel workbook → Data → Refresh All
+	4.	Done
