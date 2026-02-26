@@ -6,6 +6,7 @@ import { z } from "zod";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import crypto from "crypto";
+import type { OAuthCredentials } from "./microsoft-graph";
 import {
   getAuthUrl,
   exchangeCodeForTokens,
@@ -143,10 +144,13 @@ function parseFileToRows(buffer: Buffer, filename: string): string[][] {
   return rows;
 }
 
+const pendingOAuthCreds = new Map<string, OAuthCredentials>();
+
 const tokenStore = new Map<string, {
   accessToken: string;
   refreshToken?: string;
   expiresAt: Date;
+  creds: OAuthCredentials;
   userName?: string;
   userEmail?: string;
 }>();
@@ -161,7 +165,7 @@ async function getValidToken(sessionId: string): Promise<string | null> {
 
   if (stored.refreshToken) {
     try {
-      const refreshed = await refreshAccessToken(stored.refreshToken);
+      const refreshed = await refreshAccessToken(stored.creds, stored.refreshToken);
       stored.accessToken = refreshed.accessToken;
       stored.refreshToken = refreshed.refreshToken || stored.refreshToken;
       stored.expiresAt = refreshed.expiresAt;
@@ -187,36 +191,47 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   app.get("/api/auth/microsoft/status", async (req, res) => {
-    const hasCredentials = !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
     const sessionId = req.session?.microsoftSessionId;
 
-    if (!hasCredentials) {
-      return res.json({ configured: false, connected: false, message: "Microsoft OAuth credentials not configured" });
-    }
-
     if (!sessionId) {
-      return res.json({ configured: true, connected: false });
+      return res.json({ connected: false });
     }
 
     const token = await getValidToken(sessionId);
     if (!token) {
-      return res.json({ configured: true, connected: false });
+      return res.json({ connected: false });
     }
 
     const stored = tokenStore.get(sessionId);
     return res.json({
-      configured: true,
       connected: true,
       user: { displayName: stored?.userName, email: stored?.userEmail },
     });
   });
 
-  app.get("/api/auth/microsoft/login", (req, res) => {
+  app.post("/api/auth/microsoft/login", (req, res) => {
     try {
+      const { clientId, clientSecret, tenantId } = req.body;
+      if (!clientId || !clientSecret || !tenantId) {
+        return res.status(400).json({ error: "Client ID, Client Secret, and Tenant ID are all required." });
+      }
+
+      if (!/^[0-9a-f-]{36}$/i.test(clientId)) {
+        return res.status(400).json({ error: "Invalid Client ID format. Expected a GUID." });
+      }
+      if (!/^[0-9a-f-]{36}$/i.test(tenantId)) {
+        return res.status(400).json({ error: "Invalid Tenant ID format. Expected a GUID." });
+      }
+
+      const creds: OAuthCredentials = { clientId, clientSecret, tenantId };
+
       const state = crypto.randomBytes(16).toString("hex");
       req.session.oauthState = state;
+      pendingOAuthCreds.set(state, creds);
+      setTimeout(() => pendingOAuthCreds.delete(state), 10 * 60 * 1000);
+
       const redirectUri = getRedirectUri(req);
-      const authUrl = getAuthUrl(redirectUri, state);
+      const authUrl = getAuthUrl(creds, redirectUri, state);
       res.json({ authUrl });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -235,8 +250,14 @@ export async function registerRoutes(
         return res.redirect("/?auth_error=Invalid+OAuth+state");
       }
 
+      const creds = pendingOAuthCreds.get(String(state));
+      if (!creds) {
+        return res.redirect("/?auth_error=Session+expired.+Please+try+again.");
+      }
+      pendingOAuthCreds.delete(String(state));
+
       const redirectUri = getRedirectUri(req);
-      const tokens = await exchangeCodeForTokens(String(code), redirectUri);
+      const tokens = await exchangeCodeForTokens(creds, String(code), redirectUri);
 
       const user = await getCurrentUser(tokens.accessToken);
 
@@ -245,6 +266,7 @@ export async function registerRoutes(
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
         expiresAt: tokens.expiresAt,
+        creds,
         userName: user.displayName,
         userEmail: user.mail,
       });

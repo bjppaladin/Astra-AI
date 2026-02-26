@@ -9,32 +9,29 @@ const SCOPES = [
   "offline_access",
 ];
 
-export function getAuthUrl(redirectUri: string, state: string): string {
-  const clientId = process.env.MICROSOFT_CLIENT_ID;
-  const tenantId = process.env.MICROSOFT_TENANT_ID || "common";
+export interface OAuthCredentials {
+  clientId: string;
+  clientSecret: string;
+  tenantId: string;
+}
 
-  if (!clientId) throw new Error("MICROSOFT_CLIENT_ID is not configured");
-
+export function getAuthUrl(creds: OAuthCredentials, redirectUri: string, state: string): string {
   const scope = SCOPES.join(" ");
-  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${state}&response_mode=query&prompt=consent`;
+  return `https://login.microsoftonline.com/${creds.tenantId}/oauth2/v2.0/authorize?client_id=${creds.clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${state}&response_mode=query&prompt=consent`;
 }
 
 export async function exchangeCodeForTokens(
+  creds: OAuthCredentials,
   code: string,
   redirectUri: string
 ): Promise<{
   accessToken: string;
   refreshToken: string | undefined;
   expiresAt: Date;
-  tenantId: string | undefined;
 }> {
-  const clientId = process.env.MICROSOFT_CLIENT_ID!;
-  const clientSecret = process.env.MICROSOFT_CLIENT_SECRET!;
-  const tenantId = process.env.MICROSOFT_TENANT_ID || "common";
-
   const params = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
     grant_type: "authorization_code",
     code,
     redirect_uri: redirectUri,
@@ -42,7 +39,7 @@ export async function exchangeCodeForTokens(
   });
 
   const response = await fetch(
-    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+    `https://login.microsoftonline.com/${creds.tenantId}/oauth2/v2.0/token`,
     { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() }
   );
 
@@ -56,29 +53,24 @@ export async function exchangeCodeForTokens(
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresAt: new Date(Date.now() + data.expires_in * 1000),
-    tenantId,
   };
 }
 
-export async function refreshAccessToken(refreshToken: string): Promise<{
+export async function refreshAccessToken(creds: OAuthCredentials, refreshToken: string): Promise<{
   accessToken: string;
   refreshToken: string | undefined;
   expiresAt: Date;
 }> {
-  const clientId = process.env.MICROSOFT_CLIENT_ID!;
-  const clientSecret = process.env.MICROSOFT_CLIENT_SECRET!;
-  const tenantId = process.env.MICROSOFT_TENANT_ID || "common";
-
   const params = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
     grant_type: "refresh_token",
     refresh_token: refreshToken,
     scope: SCOPES.join(" "),
   });
 
   const response = await fetch(
-    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+    `https://login.microsoftonline.com/${creds.tenantId}/oauth2/v2.0/token`,
     { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() }
   );
 
