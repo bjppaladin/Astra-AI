@@ -9,19 +9,34 @@ const SCOPES = [
   "offline_access",
 ];
 
-export interface OAuthCredentials {
-  clientId: string;
-  clientSecret: string;
-  tenantId: string;
+function getClientId(): string {
+  const id = process.env.MICROSOFT_CLIENT_ID;
+  if (!id) throw new Error("MICROSOFT_CLIENT_ID not configured");
+  return id;
 }
 
-export function getAuthUrl(creds: OAuthCredentials, redirectUri: string, state: string): string {
+function getClientSecret(): string {
+  const secret = process.env.MICROSOFT_CLIENT_SECRET;
+  if (!secret) throw new Error("MICROSOFT_CLIENT_SECRET not configured");
+  return secret;
+}
+
+function getTenantId(): string {
+  return process.env.MICROSOFT_TENANT_ID || "common";
+}
+
+export function isOAuthConfigured(): boolean {
+  return !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
+}
+
+export function getAuthUrl(redirectUri: string, state: string): string {
   const scope = SCOPES.join(" ");
-  return `https://login.microsoftonline.com/${creds.tenantId}/oauth2/v2.0/authorize?client_id=${creds.clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${state}&response_mode=query&prompt=consent`;
+  const tenantId = getTenantId();
+  const clientId = getClientId();
+  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${state}&response_mode=query&prompt=consent`;
 }
 
 export async function exchangeCodeForTokens(
-  creds: OAuthCredentials,
   code: string,
   redirectUri: string
 ): Promise<{
@@ -30,8 +45,8 @@ export async function exchangeCodeForTokens(
   expiresAt: Date;
 }> {
   const params = new URLSearchParams({
-    client_id: creds.clientId,
-    client_secret: creds.clientSecret,
+    client_id: getClientId(),
+    client_secret: getClientSecret(),
     grant_type: "authorization_code",
     code,
     redirect_uri: redirectUri,
@@ -39,7 +54,7 @@ export async function exchangeCodeForTokens(
   });
 
   const response = await fetch(
-    `https://login.microsoftonline.com/${creds.tenantId}/oauth2/v2.0/token`,
+    `https://login.microsoftonline.com/${getTenantId()}/oauth2/v2.0/token`,
     { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() }
   );
 
@@ -56,21 +71,21 @@ export async function exchangeCodeForTokens(
   };
 }
 
-export async function refreshAccessToken(creds: OAuthCredentials, refreshToken: string): Promise<{
+export async function refreshAccessToken(refreshToken: string): Promise<{
   accessToken: string;
   refreshToken: string | undefined;
   expiresAt: Date;
 }> {
   const params = new URLSearchParams({
-    client_id: creds.clientId,
-    client_secret: creds.clientSecret,
+    client_id: getClientId(),
+    client_secret: getClientSecret(),
     grant_type: "refresh_token",
     refresh_token: refreshToken,
     scope: SCOPES.join(" "),
   });
 
   const response = await fetch(
-    `https://login.microsoftonline.com/${creds.tenantId}/oauth2/v2.0/token`,
+    `https://login.microsoftonline.com/${getTenantId()}/oauth2/v2.0/token`,
     { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() }
   );
 

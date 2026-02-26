@@ -1,6 +1,7 @@
 import { queryClient } from "./queryClient";
 
 export async function getMicrosoftAuthStatus(): Promise<{
+  configured: boolean;
   connected: boolean;
   user?: { displayName: string; email: string };
 }> {
@@ -9,16 +10,8 @@ export async function getMicrosoftAuthStatus(): Promise<{
   return res.json();
 }
 
-export async function getMicrosoftLoginUrl(creds: {
-  clientId: string;
-  clientSecret: string;
-  tenantId: string;
-}): Promise<string> {
-  const res = await fetch("/api/auth/microsoft/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(creds),
-  });
+export async function getMicrosoftLoginUrl(): Promise<string> {
+  const res = await fetch("/api/auth/microsoft/login");
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || "Failed to start login");

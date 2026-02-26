@@ -78,11 +78,11 @@ export default function Dashboard() {
   const mailboxFileRef = useRef<HTMLInputElement>(null);
 
   const [msAuth, setMsAuth] = useState<{
+    configured: boolean;
     connected: boolean;
     user?: { displayName: string; email: string };
-  }>({ connected: false });
+  }>({ configured: false, connected: false });
   const [msLoading, setMsLoading] = useState(false);
-  const [oauthCreds, setOauthCreds] = useState({ clientId: "", clientSecret: "", tenantId: "" });
 
   const [customRules, setCustomRules] = useState({
     upgradeE1ToE3: true,
@@ -192,13 +192,9 @@ export default function Dashboard() {
   };
 
   const handleMicrosoftLogin = async () => {
-    if (!oauthCreds.clientId || !oauthCreds.clientSecret || !oauthCreds.tenantId) {
-      toast({ title: "Missing credentials", description: "Please fill in Client ID, Client Secret, and Tenant ID.", variant: "destructive" });
-      return;
-    }
     setMsLoading(true);
     try {
-      const authUrl = await getMicrosoftLoginUrl(oauthCreds);
+      const authUrl = await getMicrosoftLoginUrl();
       window.location.href = authUrl;
     } catch (err: any) {
       toast({ title: "Login failed", description: err.message, variant: "destructive" });
@@ -568,43 +564,26 @@ export default function Dashboard() {
                       </Button>
                     </div>
                   </div>
-                ) : (
+                ) : msAuth.configured ? (
                   <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">
-                      Enter your Azure AD app registration details, then sign in through the Microsoft consent screen.
+                    <p className="text-xs text-muted-foreground flex-1">
+                      Click below to sign in with your Microsoft 365 account. You'll be taken to the Microsoft consent screen to authorize access.
                     </p>
-                    <Input
-                      placeholder="Application (Client) ID"
-                      value={oauthCreds.clientId}
-                      onChange={(e) => setOauthCreds((p) => ({ ...p, clientId: e.target.value }))}
-                      className="h-8 text-xs"
-                      data-testid="input-client-id"
-                    />
-                    <Input
-                      placeholder="Client Secret"
-                      type="password"
-                      value={oauthCreds.clientSecret}
-                      onChange={(e) => setOauthCreds((p) => ({ ...p, clientSecret: e.target.value }))}
-                      className="h-8 text-xs"
-                      data-testid="input-client-secret"
-                    />
-                    <Input
-                      placeholder="Directory (Tenant) ID"
-                      value={oauthCreds.tenantId}
-                      onChange={(e) => setOauthCreds((p) => ({ ...p, tenantId: e.target.value }))}
-                      className="h-8 text-xs"
-                      data-testid="input-tenant-id"
-                    />
                     <Button
                       size="sm"
                       className="gap-2 w-full bg-[#0078d4] hover:bg-[#106ebe] text-white"
                       onClick={handleMicrosoftLogin}
-                      disabled={msLoading || !oauthCreds.clientId || !oauthCreds.clientSecret || !oauthCreds.tenantId}
+                      disabled={msLoading}
                       data-testid="button-microsoft-login"
                     >
                       {msLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
                       Sign in with Microsoft
                     </Button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground bg-muted rounded-md p-3">
+                    <Info className="h-3 w-3 inline mr-1" />
+                    Microsoft sign-in is not yet available. Use CSV/XLSX upload instead.
                   </div>
                 )}
               </div>
