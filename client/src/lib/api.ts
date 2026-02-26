@@ -1,5 +1,41 @@
 import { queryClient } from "./queryClient";
 
+export async function getMicrosoftAuthStatus(): Promise<{
+  configured: boolean;
+  connected: boolean;
+  message?: string;
+  user?: { displayName: string; email: string };
+}> {
+  const res = await fetch("/api/auth/microsoft/status");
+  if (!res.ok) throw new Error("Failed to check auth status");
+  return res.json();
+}
+
+export async function getMicrosoftLoginUrl(): Promise<string> {
+  const res = await fetch("/api/auth/microsoft/login");
+  if (!res.ok) throw new Error("Failed to get login URL");
+  const data = await res.json();
+  return data.authUrl;
+}
+
+export async function disconnectMicrosoft(): Promise<void> {
+  const res = await fetch("/api/auth/microsoft/disconnect", { method: "POST" });
+  if (!res.ok) throw new Error("Failed to disconnect");
+}
+
+export async function syncMicrosoftData(): Promise<{
+  users: any[];
+  source: string;
+  syncedAt: string;
+}> {
+  const res = await fetch("/api/microsoft/sync");
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to sync data");
+  }
+  return res.json();
+}
+
 export async function uploadUsersFile(file: File): Promise<{
   users: any[];
   source: string;

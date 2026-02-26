@@ -5,6 +5,14 @@ import OpenAI from "openai";
 import { z } from "zod";
 import multer from "multer";
 import * as XLSX from "xlsx";
+import crypto from "crypto";
+import {
+  getAuthUrl,
+  exchangeCodeForTokens,
+  refreshAccessToken,
+  getCurrentUser,
+  fetchM365Data,
+} from "./microsoft-graph";
 
 const openrouter = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -135,10 +143,144 @@ function parseFileToRows(buffer: Buffer, filename: string): string[][] {
   return rows;
 }
 
+const tokenStore = new Map<string, {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt: Date;
+  userName?: string;
+  userEmail?: string;
+}>();
+
+async function getValidToken(sessionId: string): Promise<string | null> {
+  const stored = tokenStore.get(sessionId);
+  if (!stored) return null;
+
+  if (stored.expiresAt > new Date(Date.now() + 5 * 60 * 1000)) {
+    return stored.accessToken;
+  }
+
+  if (stored.refreshToken) {
+    try {
+      const refreshed = await refreshAccessToken(stored.refreshToken);
+      stored.accessToken = refreshed.accessToken;
+      stored.refreshToken = refreshed.refreshToken || stored.refreshToken;
+      stored.expiresAt = refreshed.expiresAt;
+      tokenStore.set(sessionId, stored);
+      return stored.accessToken;
+    } catch {
+      tokenStore.delete(sessionId);
+    }
+  }
+
+  return null;
+}
+
+function getRedirectUri(req: any): string {
+  const proto = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  return `${proto}://${host}/api/auth/microsoft/callback`;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  app.get("/api/auth/microsoft/status", async (req, res) => {
+    const hasCredentials = !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
+    const sessionId = req.session?.microsoftSessionId;
+
+    if (!hasCredentials) {
+      return res.json({ configured: false, connected: false, message: "Microsoft OAuth credentials not configured" });
+    }
+
+    if (!sessionId) {
+      return res.json({ configured: true, connected: false });
+    }
+
+    const token = await getValidToken(sessionId);
+    if (!token) {
+      return res.json({ configured: true, connected: false });
+    }
+
+    const stored = tokenStore.get(sessionId);
+    return res.json({
+      configured: true,
+      connected: true,
+      user: { displayName: stored?.userName, email: stored?.userEmail },
+    });
+  });
+
+  app.get("/api/auth/microsoft/login", (req, res) => {
+    try {
+      const state = crypto.randomBytes(16).toString("hex");
+      req.session.oauthState = state;
+      const redirectUri = getRedirectUri(req);
+      const authUrl = getAuthUrl(redirectUri, state);
+      res.json({ authUrl });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/auth/microsoft/callback", async (req, res) => {
+    try {
+      const { code, state, error, error_description } = req.query;
+
+      if (error) {
+        return res.redirect(`/?auth_error=${encodeURIComponent(String(error_description || error))}`);
+      }
+
+      if (!code || state !== req.session.oauthState) {
+        return res.redirect("/?auth_error=Invalid+OAuth+state");
+      }
+
+      const redirectUri = getRedirectUri(req);
+      const tokens = await exchangeCodeForTokens(String(code), redirectUri);
+
+      const user = await getCurrentUser(tokens.accessToken);
+
+      const sessionId = crypto.randomBytes(16).toString("hex");
+      tokenStore.set(sessionId, {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+        userName: user.displayName,
+        userEmail: user.mail,
+      });
+      req.session.microsoftSessionId = sessionId;
+
+      res.redirect("/?auth_success=true");
+    } catch (err: any) {
+      console.error("OAuth callback error:", err.message);
+      res.redirect(`/?auth_error=${encodeURIComponent(err.message)}`);
+    }
+  });
+
+  app.post("/api/auth/microsoft/disconnect", (req, res) => {
+    const sessionId = req.session?.microsoftSessionId;
+    if (sessionId) {
+      tokenStore.delete(sessionId);
+      delete req.session.microsoftSessionId;
+    }
+    res.json({ success: true });
+  });
+
+  app.get("/api/microsoft/sync", async (req, res) => {
+    const sessionId = req.session?.microsoftSessionId;
+    if (!sessionId) return res.status(401).json({ error: "Not connected to Microsoft 365" });
+
+    const token = await getValidToken(sessionId);
+    if (!token) return res.status(401).json({ error: "Session expired. Please reconnect." });
+
+    try {
+      const users = await fetchM365Data(token);
+      res.json({ users, source: "microsoft365", syncedAt: new Date().toISOString() });
+    } catch (err: any) {
+      console.error("M365 sync error:", err.message);
+      res.status(500).json({ error: `Failed to sync: ${err.message}` });
+    }
+  });
 
   app.post("/api/upload/users", upload.single("file"), (req, res) => {
     try {

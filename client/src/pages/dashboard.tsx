@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
 import {
   RefreshCcw,
@@ -19,6 +19,9 @@ import {
   Upload,
   X,
   Info,
+  LogIn,
+  LogOut,
+  Cloud,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +37,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import * as XLSX from "xlsx";
-import { saveReport, uploadUsersFile, uploadMailboxFile } from "@/lib/api";
+import {
+  saveReport,
+  uploadUsersFile,
+  uploadMailboxFile,
+  getMicrosoftAuthStatus,
+  getMicrosoftLoginUrl,
+  disconnectMicrosoft,
+  syncMicrosoftData,
+} from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
 const mockData = [
@@ -56,7 +67,7 @@ export default function Dashboard() {
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [data, setData] = useState<typeof mockData>([]);
-  const [dataSource, setDataSource] = useState<"mock" | "uploaded">("mock");
+  const [dataSource, setDataSource] = useState<"mock" | "uploaded" | "microsoft">("mock");
   const [showUploadPanel, setShowUploadPanel] = useState(false);
   const [uploadedUserFile, setUploadedUserFile] = useState<string | null>(null);
   const [uploadedMailboxFile, setUploadedMailboxFile] = useState<string | null>(null);
@@ -66,6 +77,13 @@ export default function Dashboard() {
   const userFileRef = useRef<HTMLInputElement>(null);
   const mailboxFileRef = useRef<HTMLInputElement>(null);
 
+  const [msAuth, setMsAuth] = useState<{
+    configured: boolean;
+    connected: boolean;
+    user?: { displayName: string; email: string };
+  }>({ configured: false, connected: false });
+  const [msLoading, setMsLoading] = useState(false);
+
   const [customRules, setCustomRules] = useState({
     upgradeE1ToE3: true,
     upgradeE3ToE5: false,
@@ -74,6 +92,28 @@ export default function Dashboard() {
     removeProject: false,
     addCopilotEngineering: false,
   });
+
+  const checkAuthStatus = useCallback(async () => {
+    try {
+      const status = await getMicrosoftAuthStatus();
+      setMsAuth(status);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    checkAuthStatus();
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("auth_success")) {
+      toast({ title: "Connected to Microsoft 365", description: "You can now sync your tenant data." });
+      checkAuthStatus();
+      window.history.replaceState({}, "", "/");
+    }
+    if (params.get("auth_error")) {
+      toast({ title: "Authentication failed", description: decodeURIComponent(params.get("auth_error")!), variant: "destructive" });
+      window.history.replaceState({}, "", "/");
+    }
+  }, []);
 
   useEffect(() => {
     setIsSyncing(true);
@@ -151,12 +191,59 @@ export default function Dashboard() {
     toast({ title: "Reset to demo data", description: "Upload your M365 reports to analyze real data." });
   };
 
-  const handleSync = () => {
+  const handleMicrosoftLogin = async () => {
+    setMsLoading(true);
+    try {
+      const authUrl = await getMicrosoftLoginUrl();
+      window.location.href = authUrl;
+    } catch (err: any) {
+      toast({ title: "Login failed", description: err.message, variant: "destructive" });
+      setMsLoading(false);
+    }
+  };
+
+  const handleMicrosoftDisconnect = async () => {
+    try {
+      await disconnectMicrosoft();
+      setMsAuth({ configured: true, connected: false });
+      if (dataSource === "microsoft") {
+        setData(mockData);
+        setDataSource("mock");
+      }
+      toast({ title: "Disconnected", description: "Microsoft 365 account disconnected." });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const handleMicrosoftSync = async () => {
     setIsSyncing(true);
-    setTimeout(() => {
-      setData([...data]);
+    try {
+      const result = await syncMicrosoftData();
+      setData(result.users);
+      setDataSource("microsoft");
+      setShowUploadPanel(false);
+      toast({
+        title: "Data synced from Microsoft 365",
+        description: `Loaded ${result.users.length} licensed users with mailbox data.`,
+      });
+    } catch (err: any) {
+      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+    } finally {
       setIsSyncing(false);
-    }, 1000);
+    }
+  };
+
+  const handleSync = () => {
+    if (msAuth.connected) {
+      handleMicrosoftSync();
+    } else {
+      setIsSyncing(true);
+      setTimeout(() => {
+        setData([...data]);
+        setIsSyncing(false);
+      }, 1000);
+    }
   };
 
   const handleExportXlsx = () => {
@@ -372,6 +459,28 @@ export default function Dashboard() {
               </button>
             </Badge>
           )}
+          {dataSource === "microsoft" && (
+            <Badge variant="outline" className="text-xs font-normal text-blue-600 border-blue-300">
+              <Cloud className="h-3 w-3 mr-1 inline" />
+              Live M365 Data
+              <button onClick={handleClearUploads} className="ml-1.5 hover:text-blue-800" data-testid="button-clear-microsoft">
+                <X className="h-3 w-3 inline" />
+              </button>
+            </Badge>
+          )}
+          {msAuth.connected && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={handleMicrosoftSync}
+              disabled={isSyncing}
+              data-testid="button-sync-m365"
+            >
+              {isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+              Sync M365
+            </Button>
+          )}
           <Button 
             variant="outline" 
             size="sm" 
@@ -380,7 +489,7 @@ export default function Dashboard() {
             data-testid="button-import"
           >
             <Upload className="h-4 w-4" />
-            Import M365 Data
+            Import Data
           </Button>
           <Button size="sm" className="gap-2" onClick={handleExportXlsx} data-testid="button-export">
             <Download className="h-4 w-4" />
@@ -399,25 +508,83 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* Upload Panel */}
+      {/* Import Panel */}
       {showUploadPanel && (
         <div className="border-b border-border bg-muted/30 px-6 py-5 animate-in slide-in-from-top-2 duration-300">
           <div className="max-w-7xl mx-auto">
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="text-sm font-semibold flex items-center gap-2">
-                  <Upload className="h-4 w-4" />
-                  Import Microsoft 365 Reports
+                  <Database className="h-4 w-4" />
+                  Import Microsoft 365 Data
                 </h3>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Export CSV/XLSX files from the M365 Admin Center and upload them here.
+                  Sign in with Microsoft to pull data automatically, or upload exported CSV/XLSX files.
                 </p>
               </div>
               <Button variant="ghost" size="sm" onClick={() => setShowUploadPanel(false)} className="h-7 w-7 p-0" data-testid="button-close-upload">
                 <X className="h-4 w-4" />
               </Button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="border border-border rounded-lg p-4 bg-background/50 flex flex-col">
+                <div className="flex items-center gap-2 mb-2">
+                  <Cloud className="h-4 w-4 text-blue-600" />
+                  <div className="text-sm font-medium">Microsoft 365 Sign-In</div>
+                  <Badge variant="secondary" className="text-[10px] ml-auto">Recommended</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mb-3 flex-1">
+                  Authorize via Microsoft consent screen to sync users, licenses, and mailbox data automatically.
+                </p>
+                {!msAuth.configured ? (
+                  <div className="text-xs text-muted-foreground bg-muted rounded-md p-2">
+                    <Info className="h-3 w-3 inline mr-1" />
+                    OAuth credentials not configured. Ask your admin to set up MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, and MICROSOFT_TENANT_ID.
+                  </div>
+                ) : msAuth.connected ? (
+                  <div className="space-y-2">
+                    <div className="text-xs bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-md p-2 flex items-center gap-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-blue-600" />
+                      <div>
+                        <div className="font-medium text-blue-800 dark:text-blue-200">{msAuth.user?.displayName}</div>
+                        <div className="text-blue-600 dark:text-blue-400">{msAuth.user?.email}</div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        className="gap-2 flex-1"
+                        onClick={handleMicrosoftSync}
+                        disabled={isSyncing}
+                        data-testid="button-sync-panel"
+                      >
+                        {isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                        Sync Data
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={handleMicrosoftDisconnect}
+                        data-testid="button-disconnect"
+                      >
+                        <LogOut className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    className="gap-2 w-full bg-[#0078d4] hover:bg-[#106ebe] text-white"
+                    onClick={handleMicrosoftLogin}
+                    disabled={msLoading}
+                    data-testid="button-microsoft-login"
+                  >
+                    {msLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+                    Sign in with Microsoft
+                  </Button>
+                )}
+              </div>
               <div className="border border-dashed border-border rounded-lg p-4 bg-background/50">
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-sm font-medium">Active Users Report</div>
