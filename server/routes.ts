@@ -3,24 +3,136 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import OpenAI from "openai";
 import { z } from "zod";
-import crypto from "crypto";
-import {
-  getAuthUrl,
-  exchangeCodeForTokens,
-  getCurrentUser,
-  fetchM365Data,
-  refreshAccessToken,
-} from "./microsoft-graph";
+import multer from "multer";
+import * as XLSX from "xlsx";
 
 const openrouter = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
   baseURL: "https://openrouter.ai/api/v1",
 });
 
-function getRedirectUri(req: any): string {
-  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-  const host = req.headers["x-forwarded-host"] || req.headers.host;
-  return `${protocol}://${host}/api/auth/microsoft/callback`;
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+const SKU_COST_MAP: Record<string, { name: string; cost: number }> = {
+  "SPE_E5": { name: "Microsoft 365 E5", cost: 57.00 },
+  "MICROSOFT 365 E5": { name: "Microsoft 365 E5", cost: 57.00 },
+  "SPE_E3": { name: "Microsoft 365 E3", cost: 36.00 },
+  "MICROSOFT 365 E3": { name: "Microsoft 365 E3", cost: 36.00 },
+  "STANDARDPACK": { name: "Office 365 E1", cost: 10.00 },
+  "OFFICE 365 E1": { name: "Office 365 E1", cost: 10.00 },
+  "SPE_F1": { name: "Microsoft 365 F1", cost: 2.25 },
+  "MICROSOFT 365 F1": { name: "Microsoft 365 F1", cost: 2.25 },
+  "ENTERPRISEPREMIUM": { name: "Office 365 E5", cost: 38.00 },
+  "OFFICE 365 E5": { name: "Office 365 E5", cost: 38.00 },
+  "ENTERPRISEPACK": { name: "Office 365 E3", cost: 23.00 },
+  "OFFICE 365 E3": { name: "Office 365 E3", cost: 23.00 },
+  "VISIOCLIENT": { name: "Visio Plan 2", cost: 15.00 },
+  "VISIO PLAN 2": { name: "Visio Plan 2", cost: 15.00 },
+  "VISIO ONLINE PLAN 2": { name: "Visio Plan 2", cost: 15.00 },
+  "PROJECTPREMIUM": { name: "Project Plan 5", cost: 55.00 },
+  "PROJECT PLAN 5": { name: "Project Plan 5", cost: 55.00 },
+  "PROJECTPROFESSIONAL": { name: "Project Plan 3", cost: 30.00 },
+  "PROJECT PLAN 3": { name: "Project Plan 3", cost: 30.00 },
+  "POWER_BI_PRO": { name: "Power BI Pro", cost: 10.00 },
+  "POWER BI PRO": { name: "Power BI Pro", cost: 10.00 },
+  "POWER_BI_PREMIUM_PER_USER": { name: "Power BI Premium Per User", cost: 20.00 },
+  "MICROSOFT 365 COPILOT": { name: "Microsoft 365 Copilot", cost: 30.00 },
+  "MICROSOFT_365_COPILOT": { name: "Microsoft 365 Copilot", cost: 30.00 },
+  "GITHUB COPILOT": { name: "GitHub Copilot", cost: 20.00 },
+  "EXCHANGESTANDARD": { name: "Exchange Online Plan 1", cost: 4.00 },
+  "EXCHANGE ONLINE (PLAN 1)": { name: "Exchange Online Plan 1", cost: 4.00 },
+  "EXCHANGEENTERPRISE": { name: "Exchange Online Plan 2", cost: 8.00 },
+  "EXCHANGE ONLINE (PLAN 2)": { name: "Exchange Online Plan 2", cost: 8.00 },
+  "MICROSOFT 365 BUSINESS BASIC": { name: "Microsoft 365 Business Basic", cost: 6.00 },
+  "O365_BUSINESS_ESSENTIALS": { name: "Microsoft 365 Business Basic", cost: 6.00 },
+  "MICROSOFT 365 BUSINESS STANDARD": { name: "Microsoft 365 Business Standard", cost: 12.50 },
+  "O365_BUSINESS_PREMIUM": { name: "Microsoft 365 Business Standard", cost: 12.50 },
+  "MICROSOFT 365 BUSINESS PREMIUM": { name: "Microsoft 365 Business Premium", cost: 22.00 },
+  "SPB": { name: "Microsoft 365 Business Premium", cost: 22.00 },
+  "TEAMS_EXPLORATORY": { name: "Teams Exploratory", cost: 0 },
+  "FLOW_FREE": { name: "Power Automate Free", cost: 0 },
+  "POWERAPPS_VIRAL": { name: "Power Apps Trial", cost: 0 },
+  "STREAM": { name: "Microsoft Stream", cost: 0 },
+};
+
+function findLicenseInfo(licenseName: string): { name: string; cost: number } {
+  const upper = licenseName.trim().toUpperCase();
+  if (SKU_COST_MAP[upper]) return SKU_COST_MAP[upper];
+  for (const [key, val] of Object.entries(SKU_COST_MAP)) {
+    if (upper.includes(key) || key.includes(upper)) return val;
+  }
+  return { name: licenseName.trim(), cost: 0 };
+}
+
+function parseCSVContent(content: string): string[][] {
+  const rows: string[][] = [];
+  let current = "";
+  let inQuotes = false;
+  let row: string[] = [];
+
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    if (char === '"') {
+      if (inQuotes && content[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === "," && !inQuotes) {
+      row.push(current.trim());
+      current = "";
+    } else if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && content[i + 1] === "\n") i++;
+      row.push(current.trim());
+      if (row.some((c) => c)) rows.push(row);
+      row = [];
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  if (current || row.length) {
+    row.push(current.trim());
+    if (row.some((c) => c)) rows.push(row);
+  }
+  return rows;
+}
+
+function findColumnIndex(headers: string[], ...candidates: string[]): number {
+  for (const candidate of candidates) {
+    const lower = candidate.toLowerCase();
+    const idx = headers.findIndex((h) => h.toLowerCase().includes(lower));
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+function parseFileToRows(buffer: Buffer, filename: string): string[][] {
+  const ext = filename.toLowerCase().split(".").pop();
+  let rows: string[][];
+  if (ext === "csv") {
+    let content = buffer.toString("utf-8");
+    if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
+    rows = parseCSVContent(content);
+  } else {
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const data: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+    rows = data.map((row) => row.map((cell) => String(cell).trim()));
+  }
+
+  const headerKeywords = ["user principal name", "display name", "displayname", "upn", "assigned products", "email"];
+  const headerIdx = rows.findIndex((row) =>
+    row.some((cell) => headerKeywords.some((kw) => cell.toLowerCase().includes(kw)))
+  );
+
+  if (headerIdx > 0) {
+    return rows.slice(headerIdx);
+  }
+
+  return rows;
 }
 
 export async function registerRoutes(
@@ -28,142 +140,156 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
-  app.get("/api/auth/microsoft/login", (req, res) => {
+  app.post("/api/upload/users", upload.single("file"), (req, res) => {
     try {
-      const state = crypto.randomBytes(16).toString("hex");
-      req.session.oauthState = state;
-      const redirectUri = getRedirectUri(req);
-      const authUrl = getAuthUrl(redirectUri, state);
-      res.json({ authUrl });
-    } catch (err: any) {
-      console.error("Auth login error:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-  app.get("/api/auth/microsoft/callback", async (req, res) => {
-    try {
-      const { code, state, error, error_description } = req.query;
+      const rows = parseFileToRows(req.file.buffer, req.file.originalname);
+      if (rows.length < 2) return res.status(400).json({ error: "File appears empty or has no data rows" });
 
-      if (error) {
-        return res.redirect(`/?auth_error=${encodeURIComponent(error_description as string || error as string)}`);
+      const headers = rows[0];
+
+      const displayNameIdx = findColumnIndex(headers, "display name", "displayname", "full name", "name");
+      const upnIdx = findColumnIndex(headers, "user principal name", "upn", "email", "username");
+      const deptIdx = findColumnIndex(headers, "department", "dept");
+      const licenseIdx = findColumnIndex(headers, "assigned products", "licenses", "assigned licenses", "products", "product");
+      const deletedIdx = findColumnIndex(headers, "is deleted", "deleted");
+      const enabledIdx = findColumnIndex(headers, "account enabled");
+
+      if (displayNameIdx === -1 && upnIdx === -1) {
+        return res.status(400).json({
+          error: "Could not find user identity columns. Expected columns like 'Display Name' or 'User Principal Name'. Please upload the Active Users report from M365 Admin Center.",
+          detectedColumns: headers,
+        });
       }
 
-      if (!code || typeof code !== "string") {
-        return res.redirect("/?auth_error=Missing+authorization+code");
+      const users: any[] = [];
+
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length < 2) continue;
+
+        if (deletedIdx >= 0) {
+          const val = row[deletedIdx]?.toLowerCase();
+          if (val === "true" || val === "yes") continue;
+        }
+
+        if (enabledIdx >= 0) {
+          const val = row[enabledIdx]?.toLowerCase();
+          if (val === "false" || val === "no") continue;
+        }
+
+        const displayName = displayNameIdx >= 0 ? row[displayNameIdx] : row[upnIdx]?.split("@")[0] || `User ${i}`;
+        const upn = upnIdx >= 0 ? row[upnIdx] : `user${i}@unknown.com`;
+        const department = deptIdx >= 0 ? row[deptIdx] || "Unassigned" : "Unassigned";
+
+        const rawLicenses = licenseIdx >= 0 ? row[licenseIdx] : "";
+        const licenseList = rawLicenses
+          .split(/[+;,]/)
+          .map((l: string) => l.trim())
+          .filter((l: string) => l && l !== "-");
+
+        const licenses: string[] = [];
+        let cost = 0;
+        for (const lic of licenseList) {
+          const info = findLicenseInfo(lic);
+          licenses.push(info.name);
+          cost += info.cost;
+        }
+
+        if (licenses.length === 0) continue;
+
+        users.push({
+          id: String(i),
+          displayName,
+          upn,
+          department,
+          licenses,
+          cost,
+          usageGB: 0,
+          maxGB: 50,
+          status: "Active",
+        });
       }
 
-      if (state !== req.session.oauthState) {
-        return res.redirect("/?auth_error=Invalid+state+parameter");
+      if (users.length === 0) {
+        return res.status(400).json({ error: "No licensed users found in the file. Make sure you're uploading the Active Users report." });
       }
-
-      req.session.oauthState = undefined;
-
-      const redirectUri = getRedirectUri(req);
-      const tokens = await exchangeCodeForTokens(code, redirectUri);
-
-      const user = await getCurrentUser(tokens.accessToken);
-
-      const sessionId = crypto.randomBytes(32).toString("hex");
-      req.session.microsoftSessionId = sessionId;
-
-      await storage.upsertMicrosoftToken({
-        sessionId,
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken || null,
-        expiresAt: tokens.expiresAt,
-        tenantId: tokens.tenantId || null,
-        userEmail: user.mail,
-        userName: user.displayName,
-      });
-
-      res.redirect("/?auth_success=true");
-    } catch (err: any) {
-      console.error("OAuth callback error:", err);
-      res.redirect(`/?auth_error=${encodeURIComponent(err.message)}`);
-    }
-  });
-
-  app.get("/api/auth/microsoft/status", async (req, res) => {
-    try {
-      const sessionId = req.session.microsoftSessionId;
-      if (!sessionId) {
-        return res.json({ connected: false });
-      }
-
-      const token = await storage.getMicrosoftToken(sessionId);
-      if (!token) {
-        return res.json({ connected: false });
-      }
-
-      const isExpired = new Date() > new Date(token.expiresAt);
 
       res.json({
-        connected: !isExpired,
-        userEmail: token.userEmail,
-        userName: token.userName,
-        tenantId: token.tenantId,
-        expiresAt: token.expiresAt,
+        users,
+        source: "uploaded",
+        fileName: req.file.originalname,
+        totalParsed: rows.length - 1,
+        licensedUsers: users.length,
       });
     } catch (err: any) {
-      res.json({ connected: false });
+      console.error("User upload parse error:", err);
+      res.status(400).json({ error: `Failed to parse file: ${err.message}` });
     }
   });
 
-  app.post("/api/auth/microsoft/logout", async (req, res) => {
+  app.post("/api/upload/mailbox", upload.single("file"), (req, res) => {
     try {
-      const sessionId = req.session.microsoftSessionId;
-      if (sessionId) {
-        await storage.deleteMicrosoftToken(sessionId);
-      }
-      req.session.microsoftSessionId = undefined;
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-  app.get("/api/graph/sync", async (req, res) => {
-    try {
-      const sessionId = req.session.microsoftSessionId;
-      if (!sessionId) {
-        return res.status(401).json({ error: "Not connected to Microsoft 365. Please sign in first." });
-      }
+      const rows = parseFileToRows(req.file.buffer, req.file.originalname);
+      if (rows.length < 2) return res.status(400).json({ error: "File appears empty or has no data rows" });
 
-      let token = await storage.getMicrosoftToken(sessionId);
-      if (!token) {
-        return res.status(401).json({ error: "Session expired. Please sign in again." });
+      const headers = rows[0];
+
+      const upnIdx = findColumnIndex(headers, "user principal name", "upn", "email", "owner upn");
+      const storageIdx = findColumnIndex(headers, "storage used", "total item size", "mailbox size");
+      const quotaIdx = findColumnIndex(headers, "prohibit send/receive quota", "issue warning quota", "prohibit send quota", "quota");
+
+      if (upnIdx === -1) {
+        return res.status(400).json({
+          error: "Could not find 'User Principal Name' column. Please upload the Mailbox Usage report from M365 Admin Center.",
+          detectedColumns: headers,
+        });
       }
 
-      if (new Date() > new Date(token.expiresAt)) {
-        if (token.refreshToken) {
-          try {
-            const refreshed = await refreshAccessToken(token.refreshToken);
-            token = await storage.upsertMicrosoftToken({
-              sessionId,
-              accessToken: refreshed.accessToken,
-              refreshToken: refreshed.refreshToken || token.refreshToken,
-              expiresAt: refreshed.expiresAt,
-              tenantId: token.tenantId,
-              userEmail: token.userEmail,
-              userName: token.userName,
-            });
-          } catch {
-            return res.status(401).json({ error: "Token expired. Please sign in again." });
-          }
+      const mailboxData: Record<string, { usageGB: number; maxGB: number }> = {};
+
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length < 2) continue;
+
+        const upn = row[upnIdx]?.toLowerCase();
+        if (!upn) continue;
+
+        let storageBytes = storageIdx >= 0 ? parseFloat(row[storageIdx]) || 0 : 0;
+        let quotaBytes = quotaIdx >= 0 ? parseFloat(row[quotaIdx]) || 0 : 0;
+
+        let usageGB: number;
+        let maxGB: number;
+
+        if (storageBytes > 1_000_000) {
+          usageGB = storageBytes / (1024 * 1024 * 1024);
+          maxGB = quotaBytes > 0 ? quotaBytes / (1024 * 1024 * 1024) : 50;
+        } else if (storageBytes > 1000) {
+          usageGB = storageBytes / 1024;
+          maxGB = quotaBytes > 0 ? quotaBytes / 1024 : 50;
         } else {
-          return res.status(401).json({ error: "Token expired. Please sign in again." });
+          usageGB = storageBytes;
+          maxGB = quotaBytes > 0 ? quotaBytes : 50;
         }
+
+        mailboxData[upn] = {
+          usageGB: Math.round(usageGB * 10) / 10,
+          maxGB: Math.round(maxGB),
+        };
       }
 
-      const data = await fetchM365Data(token.accessToken);
-      res.json({ users: data, source: "live", tenant: token.tenantId });
+      res.json({
+        mailboxData,
+        source: "uploaded",
+        fileName: req.file.originalname,
+        totalMailboxes: Object.keys(mailboxData).length,
+      });
     } catch (err: any) {
-      console.error("Graph sync error:", err);
-      const message = err.message?.includes("Graph API error")
-        ? "Failed to fetch data from Microsoft 365. Please check your permissions and try again."
-        : err.message;
-      res.status(500).json({ error: message });
+      console.error("Mailbox upload parse error:", err);
+      res.status(400).json({ error: `Failed to parse file: ${err.message}` });
     }
   });
 

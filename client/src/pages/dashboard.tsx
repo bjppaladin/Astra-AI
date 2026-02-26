@@ -1,6 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
 import {
   RefreshCcw,
   Download,
@@ -17,10 +16,9 @@ import {
   ArrowRight,
   FileText,
   Loader2,
-  LogIn,
-  LogOut,
-  Cloud,
-  CloudOff,
+  Upload,
+  X,
+  Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import * as XLSX from "xlsx";
-import { saveReport, getMicrosoftAuthStatus, getMicrosoftLoginUrl, microsoftLogout, syncGraphData } from "@/lib/api";
+import { saveReport, uploadUsersFile, uploadMailboxFile } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
 const mockData = [
@@ -56,11 +54,17 @@ export default function Dashboard() {
   const { toast } = useToast();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [data, setData] = useState<typeof mockData>([]);
-  const [dataSource, setDataSource] = useState<"mock" | "live">("mock");
+  const [dataSource, setDataSource] = useState<"mock" | "uploaded">("mock");
+  const [showUploadPanel, setShowUploadPanel] = useState(false);
+  const [uploadedUserFile, setUploadedUserFile] = useState<string | null>(null);
+  const [uploadedMailboxFile, setUploadedMailboxFile] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [strategy, setStrategy] = useState<Strategy>("current");
   const [commitment, setCommitment] = useState<"monthly" | "annual">("monthly");
+  const userFileRef = useRef<HTMLInputElement>(null);
+  const mailboxFileRef = useRef<HTMLInputElement>(null);
 
   const [customRules, setCustomRules] = useState({
     upgradeE1ToE3: true,
@@ -71,79 +75,88 @@ export default function Dashboard() {
     addCopilotEngineering: false,
   });
 
-  const { data: authStatus, refetch: refetchAuth } = useQuery({
-    queryKey: ["/api/auth/microsoft/status"],
-    queryFn: getMicrosoftAuthStatus,
-    refetchInterval: 60000,
-  });
-
-  const isConnected = authStatus?.connected ?? false;
-
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const authSuccess = params.get("auth_success");
-    const authError = params.get("auth_error");
-
-    if (authSuccess) {
-      toast({ title: "Connected to Microsoft 365", description: "Successfully authenticated. Click Sync to pull live data." });
-      refetchAuth();
-      window.history.replaceState({}, "", "/");
-    }
-    if (authError) {
-      toast({ title: "Authentication failed", description: decodeURIComponent(authError), variant: "destructive" });
-      window.history.replaceState({}, "", "/");
-    }
+    setIsSyncing(true);
+    setTimeout(() => {
+      setData(mockData);
+      setDataSource("mock");
+      setIsSyncing(false);
+    }, 1500);
   }, []);
 
-  useEffect(() => {
-    if (!isConnected) {
-      setIsSyncing(true);
-      setTimeout(() => {
-        setData(mockData);
-        setDataSource("mock");
-        setIsSyncing(false);
-      }, 1500);
-    }
-  }, [isConnected]);
-
-  const handleMicrosoftLogin = async () => {
+  const handleUserFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
     try {
-      const authUrl = await getMicrosoftLoginUrl();
-      window.location.href = authUrl;
+      const result = await uploadUsersFile(file);
+      setData(result.users);
+      setDataSource("uploaded");
+      setUploadedUserFile(result.fileName);
+      toast({
+        title: "Users imported",
+        description: `Found ${result.licensedUsers} licensed users out of ${result.totalParsed} rows.`,
+      });
     } catch (err: any) {
-      toast({ title: "Login failed", description: err.message, variant: "destructive" });
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsUploading(false);
+      if (userFileRef.current) userFileRef.current.value = "";
     }
   };
 
-  const handleMicrosoftLogout = async () => {
-    await microsoftLogout();
-    refetchAuth();
+  const handleMailboxFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    try {
+      const result = await uploadMailboxFile(file);
+      setUploadedMailboxFile(result.fileName);
+
+      let matchedCount = 0;
+      setData((prev) =>
+        prev.map((user) => {
+          const mailbox = result.mailboxData[user.upn.toLowerCase()];
+          if (mailbox) {
+            matchedCount++;
+            const ratio = mailbox.usageGB / mailbox.maxGB;
+            return {
+              ...user,
+              usageGB: mailbox.usageGB,
+              maxGB: mailbox.maxGB,
+              status: ratio > 0.9 ? "Critical" : ratio > 0.7 ? "Warning" : "Active",
+            };
+          }
+          return user;
+        })
+      );
+      toast({
+        title: "Mailbox data merged",
+        description: `Matched ${matchedCount} of ${result.totalMailboxes} mailboxes to user records.`,
+      });
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsUploading(false);
+      if (mailboxFileRef.current) mailboxFileRef.current.value = "";
+    }
+  };
+
+  const handleClearUploads = () => {
     setData(mockData);
     setDataSource("mock");
-    toast({ title: "Disconnected", description: "Switched back to demo data." });
+    setUploadedUserFile(null);
+    setUploadedMailboxFile(null);
+    setShowUploadPanel(false);
+    toast({ title: "Reset to demo data", description: "Upload your M365 reports to analyze real data." });
   };
 
-  const handleSync = async () => {
+  const handleSync = () => {
     setIsSyncing(true);
-    if (isConnected) {
-      try {
-        const result = await syncGraphData();
-        setData(result.users);
-        setDataSource("live");
-        toast({ title: "Sync complete", description: `Pulled ${result.users.length} users from Microsoft 365.` });
-      } catch (err: any) {
-        toast({ title: "Sync failed", description: err.message, variant: "destructive" });
-        if (err.message.includes("sign in")) {
-          refetchAuth();
-        }
-      }
-    } else {
-      setTimeout(() => {
-        setData([...mockData].sort(() => Math.random() - 0.5));
-        setDataSource("mock");
-      }, 2000);
-    }
-    setIsSyncing(false);
+    setTimeout(() => {
+      setData([...data]);
+      setIsSyncing(false);
+    }, 1000);
   };
 
   const handleExportXlsx = () => {
@@ -347,47 +360,27 @@ export default function Dashboard() {
           </div>
           <h1 className="text-xl font-semibold tracking-tight">M365 Insights</h1>
         </div>
-        <div className="flex items-center gap-4">
-          {isConnected ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mr-2">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-              </span>
-              <Cloud className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{authStatus?.userEmail || "Connected"}</span>
-              <Button variant="ghost" size="sm" onClick={handleMicrosoftLogout} className="h-6 px-2 text-xs" data-testid="button-disconnect">
-                <LogOut className="h-3 w-3" />
-              </Button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 mr-2">
-              <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                <CloudOff className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Demo mode</span>
-              </div>
-              <Button variant="outline" size="sm" onClick={handleMicrosoftLogin} className="gap-1.5 text-xs h-7" data-testid="button-microsoft-login">
-                <LogIn className="h-3.5 w-3.5" />
-                Sign in with Microsoft
-              </Button>
-            </div>
-          )}
+        <div className="flex items-center gap-3">
           {dataSource === "mock" && data.length > 0 && (
             <Badge variant="outline" className="text-xs font-normal text-amber-600 border-amber-300">Sample Data</Badge>
           )}
-          {dataSource === "live" && (
-            <Badge variant="outline" className="text-xs font-normal text-green-600 border-green-300">Live Data</Badge>
+          {dataSource === "uploaded" && (
+            <Badge variant="outline" className="text-xs font-normal text-green-600 border-green-300">
+              Imported Data
+              <button onClick={handleClearUploads} className="ml-1.5 hover:text-green-800" data-testid="button-clear-data">
+                <X className="h-3 w-3 inline" />
+              </button>
+            </Badge>
           )}
           <Button 
             variant="outline" 
             size="sm" 
-            onClick={handleSync}
-            disabled={isSyncing}
+            onClick={() => setShowUploadPanel(!showUploadPanel)}
             className="gap-2"
-            data-testid="button-sync"
+            data-testid="button-import"
           >
-            <RefreshCcw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
-            {isSyncing ? 'Syncing...' : isConnected ? 'Sync Live Data' : 'Refresh Demo'}
+            <Upload className="h-4 w-4" />
+            Import M365 Data
           </Button>
           <Button size="sm" className="gap-2" onClick={handleExportXlsx} data-testid="button-export">
             <Download className="h-4 w-4" />
@@ -405,6 +398,96 @@ export default function Dashboard() {
           </Button>
         </div>
       </header>
+
+      {/* Upload Panel */}
+      {showUploadPanel && (
+        <div className="border-b border-border bg-muted/30 px-6 py-5 animate-in slide-in-from-top-2 duration-300">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Upload className="h-4 w-4" />
+                  Import Microsoft 365 Reports
+                </h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Export CSV/XLSX files from the M365 Admin Center and upload them here.
+                </p>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setShowUploadPanel(false)} className="h-7 w-7 p-0" data-testid="button-close-upload">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="border border-dashed border-border rounded-lg p-4 bg-background/50">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium">Active Users Report</div>
+                  {uploadedUserFile && (
+                    <Badge variant="outline" className="text-xs text-green-600 border-green-300">{uploadedUserFile}</Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  M365 Admin Center &rarr; Reports &rarr; Usage &rarr; Active Users &rarr; Export
+                </p>
+                <input
+                  ref={userFileRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xls"
+                  onChange={handleUserFileUpload}
+                  className="hidden"
+                  data-testid="input-user-file"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 w-full"
+                  onClick={() => userFileRef.current?.click()}
+                  disabled={isUploading}
+                  data-testid="button-upload-users"
+                >
+                  {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {uploadedUserFile ? "Replace file" : "Upload Active Users CSV/XLSX"}
+                </Button>
+              </div>
+              <div className="border border-dashed border-border rounded-lg p-4 bg-background/50">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium">Mailbox Usage Report</div>
+                  {uploadedMailboxFile && (
+                    <Badge variant="outline" className="text-xs text-green-600 border-green-300">{uploadedMailboxFile}</Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  M365 Admin Center &rarr; Reports &rarr; Usage &rarr; Email activity &rarr; Export
+                </p>
+                <input
+                  ref={mailboxFileRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xls"
+                  onChange={handleMailboxFileUpload}
+                  className="hidden"
+                  data-testid="input-mailbox-file"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 w-full"
+                  onClick={() => mailboxFileRef.current?.click()}
+                  disabled={isUploading || dataSource === "mock"}
+                  data-testid="button-upload-mailbox"
+                >
+                  {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {uploadedMailboxFile ? "Replace file" : "Upload Mailbox Usage CSV/XLSX"}
+                </Button>
+                {dataSource === "mock" && (
+                  <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                    <Info className="h-3 w-3" />
+                    Upload Active Users first
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 p-8 max-w-7xl mx-auto w-full space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">

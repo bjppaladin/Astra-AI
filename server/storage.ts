@@ -1,6 +1,6 @@
 import { db } from "./db";
-import { reports, executiveSummaries, users, microsoftTokens } from "@shared/schema";
-import type { User, InsertUser, Report, InsertReport, ExecutiveSummary, InsertExecutiveSummary, MicrosoftToken, InsertMicrosoftToken } from "@shared/schema";
+import { reports, executiveSummaries, users } from "@shared/schema";
+import type { User, InsertUser, Report, InsertReport, ExecutiveSummary, InsertExecutiveSummary } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
@@ -15,10 +15,6 @@ export interface IStorage {
 
   getExecutiveSummary(reportId: number): Promise<ExecutiveSummary | undefined>;
   createExecutiveSummary(summary: InsertExecutiveSummary): Promise<ExecutiveSummary>;
-
-  getMicrosoftToken(sessionId: string): Promise<MicrosoftToken | undefined>;
-  upsertMicrosoftToken(token: InsertMicrosoftToken): Promise<MicrosoftToken>;
-  deleteMicrosoftToken(sessionId: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -64,29 +60,6 @@ export class DatabaseStorage implements IStorage {
   async createExecutiveSummary(summary: InsertExecutiveSummary): Promise<ExecutiveSummary> {
     const [created] = await db.insert(executiveSummaries).values(summary).returning();
     return created;
-  }
-
-  async getMicrosoftToken(sessionId: string): Promise<MicrosoftToken | undefined> {
-    const [token] = await db.select().from(microsoftTokens).where(eq(microsoftTokens.sessionId, sessionId));
-    return token;
-  }
-
-  async upsertMicrosoftToken(token: InsertMicrosoftToken): Promise<MicrosoftToken> {
-    const existing = await this.getMicrosoftToken(token.sessionId);
-    if (existing) {
-      const [updated] = await db
-        .update(microsoftTokens)
-        .set(token)
-        .where(eq(microsoftTokens.sessionId, token.sessionId))
-        .returning();
-      return updated;
-    }
-    const [created] = await db.insert(microsoftTokens).values(token).returning();
-    return created;
-  }
-
-  async deleteMicrosoftToken(sessionId: string): Promise<void> {
-    await db.delete(microsoftTokens).where(eq(microsoftTokens.sessionId, sessionId));
   }
 }
 

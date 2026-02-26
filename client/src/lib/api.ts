@@ -1,33 +1,40 @@
 import { queryClient } from "./queryClient";
 
-export async function getMicrosoftAuthStatus(): Promise<{
-  connected: boolean;
-  userEmail?: string;
-  userName?: string;
-  tenantId?: string;
+export async function uploadUsersFile(file: File): Promise<{
+  users: any[];
+  source: string;
+  fileName: string;
+  totalParsed: number;
+  licensedUsers: number;
 }> {
-  const res = await fetch("/api/auth/microsoft/status");
-  if (!res.ok) return { connected: false };
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch("/api/upload/users", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to parse user file");
+  }
   return res.json();
 }
 
-export async function getMicrosoftLoginUrl(): Promise<string> {
-  const res = await fetch("/api/auth/microsoft/login");
-  if (!res.ok) throw new Error("Failed to get login URL");
-  const data = await res.json();
-  return data.authUrl;
-}
-
-export async function microsoftLogout(): Promise<void> {
-  await fetch("/api/auth/microsoft/logout", { method: "POST" });
-  queryClient.invalidateQueries({ queryKey: ["/api/auth/microsoft/status"] });
-}
-
-export async function syncGraphData(): Promise<{ users: any[]; source: string; tenant?: string }> {
-  const res = await fetch("/api/graph/sync");
+export async function uploadMailboxFile(file: File): Promise<{
+  mailboxData: Record<string, { usageGB: number; maxGB: number }>;
+  source: string;
+  fileName: string;
+  totalMailboxes: number;
+}> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch("/api/upload/mailbox", {
+    method: "POST",
+    body: formData,
+  });
   if (!res.ok) {
     const err = await res.json();
-    throw new Error(err.error || "Failed to sync data");
+    throw new Error(err.error || "Failed to parse mailbox file");
   }
   return res.json();
 }
