@@ -1,5 +1,37 @@
 import { queryClient } from "./queryClient";
 
+export async function getMicrosoftAuthStatus(): Promise<{
+  connected: boolean;
+  userEmail?: string;
+  userName?: string;
+  tenantId?: string;
+}> {
+  const res = await fetch("/api/auth/microsoft/status");
+  if (!res.ok) return { connected: false };
+  return res.json();
+}
+
+export async function getMicrosoftLoginUrl(): Promise<string> {
+  const res = await fetch("/api/auth/microsoft/login");
+  if (!res.ok) throw new Error("Failed to get login URL");
+  const data = await res.json();
+  return data.authUrl;
+}
+
+export async function microsoftLogout(): Promise<void> {
+  await fetch("/api/auth/microsoft/logout", { method: "POST" });
+  queryClient.invalidateQueries({ queryKey: ["/api/auth/microsoft/status"] });
+}
+
+export async function syncGraphData(): Promise<{ users: any[]; source: string; tenant?: string }> {
+  const res = await fetch("/api/graph/sync");
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to sync data");
+  }
+  return res.json();
+}
+
 export async function saveReport(data: {
   name: string;
   strategy: string;

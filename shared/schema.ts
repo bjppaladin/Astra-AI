@@ -56,4 +56,24 @@ export const insertExecutiveSummarySchema = createInsertSchema(executiveSummarie
 export type ExecutiveSummary = typeof executiveSummaries.$inferSelect;
 export type InsertExecutiveSummary = z.infer<typeof insertExecutiveSummarySchema>;
 
+export const microsoftTokens = pgTable("microsoft_tokens", {
+  id: serial("id").primaryKey(),
+  sessionId: text("session_id").notNull().unique(),
+  accessToken: text("access_token").notNull(),
+  refreshToken: text("refresh_token"),
+  expiresAt: timestamp("expires_at").notNull(),
+  tenantId: text("tenant_id"),
+  userEmail: text("user_email"),
+  userName: text("user_name"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertMicrosoftTokenSchema = createInsertSchema(microsoftTokens).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type MicrosoftToken = typeof microsoftTokens.$inferSelect;
+export type InsertMicrosoftToken = z.infer<typeof insertMicrosoftTokenSchema>;
+
 export { pgTable };

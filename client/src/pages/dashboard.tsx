@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   RefreshCcw,
   Download,
@@ -16,6 +17,10 @@ import {
   ArrowRight,
   FileText,
   Loader2,
+  LogIn,
+  LogOut,
+  Cloud,
+  CloudOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,9 +36,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import * as XLSX from "xlsx";
-import { saveReport } from "@/lib/api";
+import { saveReport, getMicrosoftAuthStatus, getMicrosoftLoginUrl, microsoftLogout, syncGraphData } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
-// Mock data generation based on the provided excel instructions
 const mockData = [
   { id: "1", displayName: "Alex Johnson", upn: "alex.j@company.com", department: "Engineering", licenses: ["Microsoft 365 E5", "Visio Plan 2"], usageGB: 45.2, maxGB: 100, cost: 57.00, status: "Active" },
   { id: "2", displayName: "Sarah Smith", upn: "sarah.s@company.com", department: "Marketing", licenses: ["Microsoft 365 E3"], usageGB: 82.5, maxGB: 100, cost: 36.00, status: "Warning" },
@@ -48,9 +53,11 @@ type Strategy = "current" | "security" | "cost" | "balanced" | "custom";
 
 export default function Dashboard() {
   const [, navigate] = useLocation();
+  const { toast } = useToast();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [data, setData] = useState<typeof mockData>([]);
+  const [dataSource, setDataSource] = useState<"mock" | "live">("mock");
   const [searchTerm, setSearchTerm] = useState("");
   const [strategy, setStrategy] = useState<Strategy>("current");
   const [commitment, setCommitment] = useState<"monthly" | "annual">("monthly");
@@ -64,21 +71,79 @@ export default function Dashboard() {
     addCopilotEngineering: false,
   });
 
+  const { data: authStatus, refetch: refetchAuth } = useQuery({
+    queryKey: ["/api/auth/microsoft/status"],
+    queryFn: getMicrosoftAuthStatus,
+    refetchInterval: 60000,
+  });
+
+  const isConnected = authStatus?.connected ?? false;
+
   useEffect(() => {
-    // Initial mock load
-    setIsSyncing(true);
-    setTimeout(() => {
-      setData(mockData);
-      setIsSyncing(false);
-    }, 1500);
+    const params = new URLSearchParams(window.location.search);
+    const authSuccess = params.get("auth_success");
+    const authError = params.get("auth_error");
+
+    if (authSuccess) {
+      toast({ title: "Connected to Microsoft 365", description: "Successfully authenticated. Click Sync to pull live data." });
+      refetchAuth();
+      window.history.replaceState({}, "", "/");
+    }
+    if (authError) {
+      toast({ title: "Authentication failed", description: decodeURIComponent(authError), variant: "destructive" });
+      window.history.replaceState({}, "", "/");
+    }
   }, []);
 
-  const handleSync = () => {
+  useEffect(() => {
+    if (!isConnected) {
+      setIsSyncing(true);
+      setTimeout(() => {
+        setData(mockData);
+        setDataSource("mock");
+        setIsSyncing(false);
+      }, 1500);
+    }
+  }, [isConnected]);
+
+  const handleMicrosoftLogin = async () => {
+    try {
+      const authUrl = await getMicrosoftLoginUrl();
+      window.location.href = authUrl;
+    } catch (err: any) {
+      toast({ title: "Login failed", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const handleMicrosoftLogout = async () => {
+    await microsoftLogout();
+    refetchAuth();
+    setData(mockData);
+    setDataSource("mock");
+    toast({ title: "Disconnected", description: "Switched back to demo data." });
+  };
+
+  const handleSync = async () => {
     setIsSyncing(true);
-    setTimeout(() => {
-      setData([...mockData].sort(() => Math.random() - 0.5)); // shuffle to simulate refresh
-      setIsSyncing(false);
-    }, 2000);
+    if (isConnected) {
+      try {
+        const result = await syncGraphData();
+        setData(result.users);
+        setDataSource("live");
+        toast({ title: "Sync complete", description: `Pulled ${result.users.length} users from Microsoft 365.` });
+      } catch (err: any) {
+        toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+        if (err.message.includes("sign in")) {
+          refetchAuth();
+        }
+      }
+    } else {
+      setTimeout(() => {
+        setData([...mockData].sort(() => Math.random() - 0.5));
+        setDataSource("mock");
+      }, 2000);
+    }
+    setIsSyncing(false);
   };
 
   const handleExportXlsx = () => {
@@ -283,13 +348,36 @@ export default function Dashboard() {
           <h1 className="text-xl font-semibold tracking-tight">M365 Insights</h1>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground mr-4">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-            </span>
-            Connected to Microsoft 365
-          </div>
+          {isConnected ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mr-2">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+              </span>
+              <Cloud className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{authStatus?.userEmail || "Connected"}</span>
+              <Button variant="ghost" size="sm" onClick={handleMicrosoftLogout} className="h-6 px-2 text-xs" data-testid="button-disconnect">
+                <LogOut className="h-3 w-3" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 mr-2">
+              <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <CloudOff className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Demo mode</span>
+              </div>
+              <Button variant="outline" size="sm" onClick={handleMicrosoftLogin} className="gap-1.5 text-xs h-7" data-testid="button-microsoft-login">
+                <LogIn className="h-3.5 w-3.5" />
+                Sign in with Microsoft
+              </Button>
+            </div>
+          )}
+          {dataSource === "mock" && data.length > 0 && (
+            <Badge variant="outline" className="text-xs font-normal text-amber-600 border-amber-300">Sample Data</Badge>
+          )}
+          {dataSource === "live" && (
+            <Badge variant="outline" className="text-xs font-normal text-green-600 border-green-300">Live Data</Badge>
+          )}
           <Button 
             variant="outline" 
             size="sm" 
@@ -299,7 +387,7 @@ export default function Dashboard() {
             data-testid="button-sync"
           >
             <RefreshCcw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
-            {isSyncing ? 'Syncing...' : 'Sync Graph Data'}
+            {isSyncing ? 'Syncing...' : isConnected ? 'Sync Live Data' : 'Refresh Demo'}
           </Button>
           <Button size="sm" className="gap-2" onClick={handleExportXlsx} data-testid="button-export">
             <Download className="h-4 w-4" />

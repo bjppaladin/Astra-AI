@@ -3,16 +3,169 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import OpenAI from "openai";
 import { z } from "zod";
+import crypto from "crypto";
+import {
+  getAuthUrl,
+  exchangeCodeForTokens,
+  getCurrentUser,
+  fetchM365Data,
+  refreshAccessToken,
+} from "./microsoft-graph";
 
 const openrouter = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
   baseURL: "https://openrouter.ai/api/v1",
 });
 
+function getRedirectUri(req: any): string {
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  return `${protocol}://${host}/api/auth/microsoft/callback`;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  app.get("/api/auth/microsoft/login", (req, res) => {
+    try {
+      const state = crypto.randomBytes(16).toString("hex");
+      req.session.oauthState = state;
+      const redirectUri = getRedirectUri(req);
+      const authUrl = getAuthUrl(redirectUri, state);
+      res.json({ authUrl });
+    } catch (err: any) {
+      console.error("Auth login error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/auth/microsoft/callback", async (req, res) => {
+    try {
+      const { code, state, error, error_description } = req.query;
+
+      if (error) {
+        return res.redirect(`/?auth_error=${encodeURIComponent(error_description as string || error as string)}`);
+      }
+
+      if (!code || typeof code !== "string") {
+        return res.redirect("/?auth_error=Missing+authorization+code");
+      }
+
+      if (state !== req.session.oauthState) {
+        return res.redirect("/?auth_error=Invalid+state+parameter");
+      }
+
+      req.session.oauthState = undefined;
+
+      const redirectUri = getRedirectUri(req);
+      const tokens = await exchangeCodeForTokens(code, redirectUri);
+
+      const user = await getCurrentUser(tokens.accessToken);
+
+      const sessionId = crypto.randomBytes(32).toString("hex");
+      req.session.microsoftSessionId = sessionId;
+
+      await storage.upsertMicrosoftToken({
+        sessionId,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken || null,
+        expiresAt: tokens.expiresAt,
+        tenantId: tokens.tenantId || null,
+        userEmail: user.mail,
+        userName: user.displayName,
+      });
+
+      res.redirect("/?auth_success=true");
+    } catch (err: any) {
+      console.error("OAuth callback error:", err);
+      res.redirect(`/?auth_error=${encodeURIComponent(err.message)}`);
+    }
+  });
+
+  app.get("/api/auth/microsoft/status", async (req, res) => {
+    try {
+      const sessionId = req.session.microsoftSessionId;
+      if (!sessionId) {
+        return res.json({ connected: false });
+      }
+
+      const token = await storage.getMicrosoftToken(sessionId);
+      if (!token) {
+        return res.json({ connected: false });
+      }
+
+      const isExpired = new Date() > new Date(token.expiresAt);
+
+      res.json({
+        connected: !isExpired,
+        userEmail: token.userEmail,
+        userName: token.userName,
+        tenantId: token.tenantId,
+        expiresAt: token.expiresAt,
+      });
+    } catch (err: any) {
+      res.json({ connected: false });
+    }
+  });
+
+  app.post("/api/auth/microsoft/logout", async (req, res) => {
+    try {
+      const sessionId = req.session.microsoftSessionId;
+      if (sessionId) {
+        await storage.deleteMicrosoftToken(sessionId);
+      }
+      req.session.microsoftSessionId = undefined;
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/graph/sync", async (req, res) => {
+    try {
+      const sessionId = req.session.microsoftSessionId;
+      if (!sessionId) {
+        return res.status(401).json({ error: "Not connected to Microsoft 365. Please sign in first." });
+      }
+
+      let token = await storage.getMicrosoftToken(sessionId);
+      if (!token) {
+        return res.status(401).json({ error: "Session expired. Please sign in again." });
+      }
+
+      if (new Date() > new Date(token.expiresAt)) {
+        if (token.refreshToken) {
+          try {
+            const refreshed = await refreshAccessToken(token.refreshToken);
+            token = await storage.upsertMicrosoftToken({
+              sessionId,
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken || token.refreshToken,
+              expiresAt: refreshed.expiresAt,
+              tenantId: token.tenantId,
+              userEmail: token.userEmail,
+              userName: token.userName,
+            });
+          } catch {
+            return res.status(401).json({ error: "Token expired. Please sign in again." });
+          }
+        } else {
+          return res.status(401).json({ error: "Token expired. Please sign in again." });
+        }
+      }
+
+      const data = await fetchM365Data(token.accessToken);
+      res.json({ users: data, source: "live", tenant: token.tenantId });
+    } catch (err: any) {
+      console.error("Graph sync error:", err);
+      const message = err.message?.includes("Graph API error")
+        ? "Failed to fetch data from Microsoft 365. Please check your permissions and try again."
+        : err.message;
+      res.status(500).json({ error: message });
+    }
+  });
 
   app.get("/api/reports", async (_req, res) => {
     const reports = await storage.getReports();
