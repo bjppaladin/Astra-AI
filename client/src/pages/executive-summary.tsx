@@ -220,46 +220,124 @@ export default function ExecutiveSummaryPage() {
     return `<div class="text-sm leading-relaxed text-foreground/85">${blocks.join("\n")}</div>`;
   };
 
+  const resolveColor = (val: string): string => {
+    const c = document.createElement("canvas");
+    c.width = 1;
+    c.height = 1;
+    const ctx = c.getContext("2d");
+    if (!ctx) return val;
+    ctx.fillStyle = val;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    return a < 255 ? `rgba(${r},${g},${b},${(a / 255).toFixed(3)})` : `rgb(${r},${g},${b})`;
+  };
+
+  const inlineAllColors = (node: HTMLElement) => {
+    const computed = window.getComputedStyle(node);
+    const colorProps = [
+      "color", "background-color", "border-color",
+      "border-top-color", "border-bottom-color",
+      "border-left-color", "border-right-color",
+      "outline-color", "text-decoration-color",
+      "box-shadow",
+    ];
+    for (const prop of colorProps) {
+      const val = computed.getPropertyValue(prop);
+      if (val && val !== "none" && val !== "initial" && val !== "inherit") {
+        if (val.includes("oklab") || val.includes("oklch") || val.includes("color-mix") || val.includes("lab(") || val.includes("lch(")) {
+          if (prop === "box-shadow") {
+            node.style.setProperty(prop, val.replace(/(?:oklab|oklch|color-mix|lab|lch)\([^)]*(?:\([^)]*\))*[^)]*\)/g, (match) => resolveColor(match)));
+          } else {
+            node.style.setProperty(prop, resolveColor(val));
+          }
+        } else {
+          node.style.setProperty(prop, val);
+        }
+      }
+    }
+
+    const bg = computed.getPropertyValue("background");
+    if (bg && (bg.includes("oklab") || bg.includes("oklch") || bg.includes("color-mix"))) {
+      node.style.setProperty("background", "none");
+      const bgColor = computed.getPropertyValue("background-color");
+      if (bgColor) node.style.setProperty("background-color", resolveColor(bgColor));
+    }
+
+    for (const child of Array.from(node.children)) {
+      if (child instanceof HTMLElement) inlineAllColors(child);
+    }
+  };
+
   const captureContent = useCallback(async () => {
     const el = exportRef.current;
     if (!el) throw new Error("Content not available for export");
 
-    const clone = el.cloneNode(true) as HTMLElement;
-    clone.style.position = "absolute";
-    clone.style.left = "-9999px";
-    clone.style.top = "0";
-    clone.style.width = el.scrollWidth + "px";
-    clone.style.backgroundColor = "#ffffff";
-    clone.style.color = "#1a1a2e";
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.left = "-10000px";
+    iframe.style.top = "0";
+    iframe.style.width = el.scrollWidth + "px";
+    iframe.style.height = el.scrollHeight + "px";
+    iframe.style.border = "none";
+    document.body.appendChild(iframe);
 
-    const resolveColors = (node: HTMLElement) => {
-      const computed = window.getComputedStyle(node);
-      const props = ["color", "background-color", "border-color", "border-top-color", "border-bottom-color", "border-left-color", "border-right-color"] as const;
-      for (const prop of props) {
-        const val = computed.getPropertyValue(prop);
-        if (val && (val.includes("oklab") || val.includes("oklch") || val.includes("color-mix"))) {
-          const canvas = document.createElement("canvas");
-          canvas.width = 1;
-          canvas.height = 1;
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            ctx.fillStyle = val;
-            ctx.fillRect(0, 0, 1, 1);
-            const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
-            node.style.setProperty(prop, a < 255 ? `rgba(${r},${g},${b},${(a / 255).toFixed(2)})` : `rgb(${r},${g},${b})`);
+    try {
+      const iframeDoc = iframe.contentDocument!;
+      iframeDoc.open();
+      iframeDoc.write("<!DOCTYPE html><html><head></head><body></body></html>");
+      iframeDoc.close();
+
+      const flattenStyles = (source: HTMLElement, target: HTMLElement) => {
+        const computed = window.getComputedStyle(source);
+        const dominated = [
+          "color", "background-color", "border-color",
+          "border-top-color", "border-bottom-color",
+          "border-left-color", "border-right-color",
+          "font-family", "font-size", "font-weight", "font-style",
+          "line-height", "letter-spacing", "text-align", "text-decoration",
+          "text-transform", "white-space", "word-spacing",
+          "padding-top", "padding-right", "padding-bottom", "padding-left",
+          "margin-top", "margin-right", "margin-bottom", "margin-left",
+          "display", "flex-direction", "align-items", "justify-content", "gap",
+          "width", "min-width", "max-width", "height", "min-height", "max-height",
+          "overflow", "position", "top", "right", "bottom", "left",
+          "border-width", "border-style", "border-radius",
+          "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+          "border-top-style", "border-right-style", "border-bottom-style", "border-left-style",
+          "opacity", "visibility", "vertical-align", "list-style-type",
+          "table-layout", "border-collapse", "border-spacing",
+          "flex-grow", "flex-shrink", "flex-basis", "flex-wrap", "order",
+        ];
+        for (const prop of dominated) {
+          let val = computed.getPropertyValue(prop);
+          if (val && val !== "initial" && val !== "inherit") {
+            if (val.includes("oklab") || val.includes("oklch") || val.includes("color-mix") || val.includes("lab(") || val.includes("lch(")) {
+              val = resolveColor(val);
+            }
+            target.style.setProperty(prop, val);
           }
         }
-      }
-      for (const child of Array.from(node.children)) {
-        if (child instanceof HTMLElement) resolveColors(child);
-      }
-    };
+        target.style.boxShadow = "none";
 
-    document.body.appendChild(clone);
-    resolveColors(clone);
+        const sourceChildren = source.children;
+        const targetChildren = target.children;
+        for (let i = 0; i < sourceChildren.length; i++) {
+          if (sourceChildren[i] instanceof HTMLElement && targetChildren[i] instanceof HTMLElement) {
+            flattenStyles(sourceChildren[i] as HTMLElement, targetChildren[i] as HTMLElement);
+          }
+        }
+      };
 
-    const html2canvas = (await import("html2canvas")).default;
-    try {
+      const clone = el.cloneNode(true) as HTMLElement;
+      iframeDoc.body.appendChild(clone);
+      clone.style.margin = "0";
+      clone.style.position = "static";
+
+      flattenStyles(el, clone);
+
+      clone.style.backgroundColor = "#ffffff";
+
+      const html2canvas = (await import("html2canvas")).default;
       const canvas = await html2canvas(clone, {
         scale: 2,
         useCORS: true,
@@ -272,7 +350,7 @@ export default function ExecutiveSummaryPage() {
       });
       return canvas;
     } finally {
-      document.body.removeChild(clone);
+      document.body.removeChild(iframe);
     }
   }, []);
 
