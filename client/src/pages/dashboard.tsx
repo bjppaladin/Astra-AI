@@ -72,6 +72,10 @@ export default function Dashboard() {
   const [uploadedUserFile, setUploadedUserFile] = useState<string | null>(null);
   const [uploadedMailboxFile, setUploadedMailboxFile] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterDepartment, setFilterDepartment] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterModified, setFilterModified] = useState<string>("all");
   const [strategy, setStrategy] = useState<Strategy>("current");
   const [commitment, setCommitment] = useState<"monthly" | "annual">("monthly");
   const userFileRef = useRef<HTMLInputElement>(null);
@@ -449,11 +453,30 @@ export default function Dashboard() {
     return analyzeAllUsers(strategy, customRules);
   }, [strategy, customRules, analyzeAllUsers]);
 
-  const filteredData = optimizedData.filter(item => 
-    item.displayName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    item.upn.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.department.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const departments = useMemo(() => {
+    const depts = new Set(data.map(u => u.department));
+    return Array.from(depts).sort();
+  }, [data]);
+
+  const filteredData = useMemo(() => {
+    return optimizedData.filter(item => {
+      const matchesSearch = searchTerm === "" ||
+        item.displayName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.upn.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.department.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesDept = filterDepartment === "all" || item.department === filterDepartment;
+      const matchesStatus = filterStatus === "all" || item.status === filterStatus;
+      if (filterModified !== "all" && strategy !== "current") {
+        const orig = data.find(u => u.id === item.id);
+        const isChanged = orig && JSON.stringify(sortLicenses(orig.licenses)) !== JSON.stringify(item.licenses);
+        if (filterModified === "changed" && !isChanged) return false;
+        if (filterModified === "unchanged" && isChanged) return false;
+      }
+      return matchesSearch && matchesDept && matchesStatus;
+    });
+  }, [optimizedData, searchTerm, filterDepartment, filterStatus, filterModified, strategy, data]);
+
+  const activeFilterCount = [filterDepartment, filterStatus, filterModified].filter(f => f !== "all").length;
 
   const getStrategyStats = useCallback((strat: Strategy) => {
     const result = analyzeAllUsers(strat, customRules);
@@ -1002,12 +1025,86 @@ export default function Dashboard() {
                     data-testid="input-search"
                   />
                 </div>
-                <Button variant="outline" size="icon" title="Filter" data-testid="button-filter">
+                <Button
+                  variant={activeFilterCount > 0 ? "default" : "outline"}
+                  size="icon"
+                  title="Filter"
+                  onClick={() => setShowFilters(!showFilters)}
+                  className="relative"
+                  data-testid="button-filter"
+                >
                   <Filter className="h-4 w-4" />
+                  {activeFilterCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center font-bold">
+                      {activeFilterCount}
+                    </span>
+                  )}
                 </Button>
               </div>
             </div>
           </CardHeader>
+          {showFilters && (
+            <div className="px-6 py-3 border-b border-border/50 bg-muted/5 flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">Department</span>
+                <Select value={filterDepartment} onValueChange={setFilterDepartment}>
+                  <SelectTrigger className="h-8 w-[160px] text-xs bg-background" data-testid="filter-department">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All departments</SelectItem>
+                    {departments.map(d => (
+                      <SelectItem key={d} value={d}>{d}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">Status</span>
+                <Select value={filterStatus} onValueChange={setFilterStatus}>
+                  <SelectTrigger className="h-8 w-[130px] text-xs bg-background" data-testid="filter-status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="Active">Active</SelectItem>
+                    <SelectItem value="Warning">Warning</SelectItem>
+                    <SelectItem value="Critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {strategy !== "current" && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">Changes</span>
+                  <Select value={filterModified} onValueChange={setFilterModified}>
+                    <SelectTrigger className="h-8 w-[150px] text-xs bg-background" data-testid="filter-modified">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All users</SelectItem>
+                      <SelectItem value="changed">Changed only</SelectItem>
+                      <SelectItem value="unchanged">Unchanged only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {activeFilterCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs text-muted-foreground"
+                  onClick={() => { setFilterDepartment("all"); setFilterStatus("all"); setFilterModified("all"); }}
+                  data-testid="button-clear-filters"
+                >
+                  <X className="h-3 w-3 mr-1" />
+                  Clear filters
+                </Button>
+              )}
+              <div className="ml-auto text-xs text-muted-foreground">
+                {filteredData.length} of {optimizedData.length} users
+              </div>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <Table>
               <TableHeader className="bg-muted/30">
@@ -1034,7 +1131,9 @@ export default function Dashboard() {
                 ) : filteredData.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
-                      No users found matching "{searchTerm}"
+                      {searchTerm || activeFilterCount > 0
+                        ? `No users found matching your ${searchTerm ? 'search' : ''}${searchTerm && activeFilterCount > 0 ? ' and ' : ''}${activeFilterCount > 0 ? 'filters' : ''}`
+                        : "No users found"}
                     </TableCell>
                   </TableRow>
                 ) : (
