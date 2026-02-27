@@ -51,16 +51,83 @@ import {
   fetchSubscriptions,
 } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { LICENSES } from "@/lib/license-data";
 
-const mockData = [
-  { id: "1", displayName: "Alex Johnson", upn: "alex.j@company.com", department: "Engineering", licenses: ["Microsoft 365 E5", "Visio Plan 2"], usageGB: 45.2, maxGB: 100, cost: 57.00, status: "Active" },
-  { id: "2", displayName: "Sarah Smith", upn: "sarah.s@company.com", department: "Marketing", licenses: ["Microsoft 365 E3"], usageGB: 82.5, maxGB: 100, cost: 36.00, status: "Warning" },
-  { id: "3", displayName: "Michael Chen", upn: "michael.c@company.com", department: "Sales", licenses: ["Microsoft 365 E3", "Power BI Pro"], usageGB: 12.1, maxGB: 100, cost: 46.00, status: "Active" },
-  { id: "4", displayName: "Emily Davis", upn: "emily.d@company.com", department: "HR", licenses: ["Office 365 E1"], usageGB: 4.8, maxGB: 50, cost: 10.00, status: "Active" },
-  { id: "5", displayName: "James Wilson", upn: "james.w@company.com", department: "Engineering", licenses: ["Microsoft 365 E5", "GitHub Copilot"], usageGB: 95.1, maxGB: 100, cost: 77.00, status: "Critical" },
-  { id: "6", displayName: "Jessica Taylor", upn: "jessica.t@company.com", department: "Finance", licenses: ["Microsoft 365 E5"], usageGB: 22.4, maxGB: 100, cost: 57.00, status: "Active" },
-  { id: "7", displayName: "David Anderson", upn: "david.a@company.com", department: "IT", licenses: ["Microsoft 365 E5", "Project Plan 3"], usageGB: 68.9, maxGB: 100, cost: 87.00, status: "Active" },
+type UserRow = {
+  id: string;
+  displayName: string;
+  upn: string;
+  department: string;
+  licenses: string[];
+  usageGB: number;
+  maxGB: number;
+  cost: number;
+  status: string;
+};
+
+const KEY_FEATURES = [
+  "desktopApps", "mailboxSize", "oneDriveStorage", "teams",
+  "conditionalAccess", "intune", "defenderOffice365", "dlp",
+  "copilotEligible", "powerBI",
 ];
+const KEY_FEATURE_LABELS: Record<string, string> = {
+  desktopApps: "Desktop Office apps",
+  mailboxSize: "Mailbox size",
+  oneDriveStorage: "OneDrive storage",
+  teams: "Microsoft Teams",
+  conditionalAccess: "Conditional Access",
+  intune: "Microsoft Intune",
+  defenderOffice365: "Defender for Office 365",
+  dlp: "Data Loss Prevention",
+  copilotEligible: "Copilot eligible",
+  powerBI: "Power BI",
+};
+
+function LicensePopoverContent({ licenseName }: { licenseName: string }) {
+  const info = LICENSES.find(l => l.displayName === licenseName);
+  if (!info) {
+    return (
+      <div className="space-y-2">
+        <div className="font-semibold text-sm">{licenseName}</div>
+        <p className="text-xs text-muted-foreground">No detailed feature data available for this license. Check the License Guide for more info.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="font-semibold text-sm">{info.displayName}</div>
+        <div className="flex items-center gap-2 mt-1">
+          <Badge variant="secondary" className="text-[10px]">{info.category}</Badge>
+          <span className="text-xs font-medium text-primary">${info.costPerMonth}/user/mo</span>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{info.description}</p>
+      </div>
+      <div className="border-t border-border/50 pt-2 space-y-1.5">
+        <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Key Capabilities</div>
+        {KEY_FEATURES.map(key => {
+          const val = info.features[key];
+          const label = KEY_FEATURE_LABELS[key];
+          if (val === undefined) return null;
+          const included = val === true || (typeof val === "string" && val !== "false");
+          return (
+            <div key={key} className="flex items-center justify-between text-xs">
+              <span className={included ? "text-foreground" : "text-muted-foreground"}>{label}</span>
+              {val === false ? (
+                <X className="h-3.5 w-3.5 text-muted-foreground/50" />
+              ) : val === true ? (
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+              ) : (
+                <span className="text-[11px] font-medium text-primary">{val}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 type Strategy = "current" | "security" | "cost" | "balanced" | "custom";
 
@@ -70,8 +137,8 @@ export default function Dashboard() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [data, setData] = useState<typeof mockData>([]);
-  const [dataSource, setDataSource] = useState<"mock" | "uploaded" | "microsoft">("mock");
+  const [data, setData] = useState<UserRow[]>([]);
+  const [dataSource, setDataSource] = useState<"none" | "uploaded" | "microsoft">("none");
   const [showUploadPanel, setShowUploadPanel] = useState(false);
   const [uploadedUserFile, setUploadedUserFile] = useState<string | null>(null);
   const [uploadedMailboxFile, setUploadedMailboxFile] = useState<string | null>(null);
@@ -138,15 +205,6 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    setIsSyncing(true);
-    setTimeout(() => {
-      setData(mockData);
-      setDataSource("mock");
-      setIsSyncing(false);
-    }, 1500);
-  }, []);
-
   const handleUserFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -206,12 +264,13 @@ export default function Dashboard() {
   };
 
   const handleClearUploads = () => {
-    setData(mockData);
-    setDataSource("mock");
+    setData([]);
+    setDataSource("none");
     setUploadedUserFile(null);
     setUploadedMailboxFile(null);
     setShowUploadPanel(false);
-    toast({ title: "Reset to demo data", description: "Upload your M365 reports to analyze real data." });
+    setStrategy("current");
+    toast({ title: "Data cleared", description: "Connect Microsoft 365 or upload reports to get started." });
   };
 
   const handleMicrosoftLogin = async () => {
@@ -230,8 +289,8 @@ export default function Dashboard() {
       await disconnectMicrosoft();
       setMsAuth({ configured: true, connected: false });
       if (dataSource === "microsoft") {
-        setData(mockData);
-        setDataSource("mock");
+        setData([]);
+        setDataSource("none");
       }
       toast({ title: "Disconnected", description: "Microsoft 365 account disconnected." });
     } catch (err: any) {
@@ -375,7 +434,7 @@ export default function Dashboard() {
     return licenses.reduce((sum, l) => sum + (LICENSE_COSTS[l] ?? 0), 0);
   };
 
-  const analyzeUser = useCallback((user: typeof mockData[0], strat: Strategy, rules: typeof customRules): UserRec => {
+  const analyzeUser = useCallback((user: UserRow, strat: Strategy, rules: typeof customRules): UserRec => {
     let newLicenses = [...user.licenses];
     const reasons: string[] = [];
     const hasMailboxData = user.maxGB > 0;
@@ -716,9 +775,6 @@ export default function Dashboard() {
           </nav>
         </div>
         <div className="flex items-center gap-3">
-          {dataSource === "mock" && data.length > 0 && (
-            <Badge variant="outline" className="text-xs font-normal text-amber-600 border-amber-300">Sample Data</Badge>
-          )}
           {dataSource === "uploaded" && (
             <Badge variant="outline" className="text-xs font-normal text-green-600 border-green-300">
               Imported Data
@@ -911,13 +967,13 @@ export default function Dashboard() {
                   size="sm"
                   className="gap-2 w-full"
                   onClick={() => mailboxFileRef.current?.click()}
-                  disabled={isUploading || dataSource === "mock"}
+                  disabled={isUploading || dataSource === "none"}
                   data-testid="button-upload-mailbox"
                 >
                   {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                   {uploadedMailboxFile ? "Replace file" : "Upload Mailbox Usage CSV/XLSX"}
                 </Button>
-                {dataSource === "mock" && (
+                {dataSource === "none" && (
                   <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
                     <Info className="h-3 w-3" />
                     Upload Active Users first
@@ -938,6 +994,64 @@ export default function Dashboard() {
             <p className="text-muted-foreground">Automated merge of Active Users and Mailbox Usage reports with actionable insights.</p>
           </div>
 
+          {data.length === 0 && !isSyncing ? (
+            <Card className="border-dashed border-2 border-border/60 bg-muted/5 shadow-none">
+              <CardContent className="py-12 flex flex-col items-center text-center">
+                <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-6">
+                  <Cloud className="h-8 w-8 text-primary" />
+                </div>
+                <h3 className="text-xl font-semibold mb-2">Connect your Microsoft 365 tenant</h3>
+                <p className="text-muted-foreground max-w-md mb-8">
+                  Astra analyzes your real licensing and mailbox data to find savings and security gaps. Get started in under a minute.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl">
+                  <div className="flex flex-col items-center p-6 rounded-xl border border-border/60 bg-card">
+                    <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center mb-3">
+                      <Cloud className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div className="font-medium mb-1">Sign in with Microsoft</div>
+                    <p className="text-xs text-muted-foreground mb-4 text-center">Recommended. One-click sign-in pulls users, licenses, and mailbox usage automatically via Microsoft Graph.</p>
+                    {msAuth.connected ? (
+                      <Button size="sm" className="gap-2 w-full" onClick={handleMicrosoftSync} disabled={isSyncing} data-testid="button-onboard-sync">
+                        {isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                        Sync Tenant Data
+                      </Button>
+                    ) : (
+                      <Button size="sm" className="gap-2 w-full" onClick={handleMicrosoftLogin} disabled={msLoading} data-testid="button-onboard-login">
+                        {msLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+                        Sign in with Microsoft
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-center p-6 rounded-xl border border-border/60 bg-card">
+                    <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center mb-3">
+                      <Upload className="h-5 w-5 text-green-600" />
+                    </div>
+                    <div className="font-medium mb-1">Upload CSV / XLSX</div>
+                    <p className="text-xs text-muted-foreground mb-4 text-center">Export from M365 Admin Center → Reports → Usage → Active Users, then upload the file here.</p>
+                    <Button size="sm" variant="outline" className="gap-2 w-full" onClick={() => { setShowUploadPanel(true); userFileRef.current?.click(); }} data-testid="button-onboard-upload">
+                      <Upload className="h-4 w-4" />
+                      Upload Active Users Report
+                    </Button>
+                  </div>
+                </div>
+                <div className="mt-6 flex items-center gap-4 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1.5">
+                    <Shield className="h-3.5 w-3.5" />
+                    Data stays in your session
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Read-only access
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Users className="h-3.5 w-3.5" />
+                    Works with any M365 tenant
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <Badge variant="secondary" className="font-normal">Billing basis</Badge>
@@ -958,6 +1072,7 @@ export default function Dashboard() {
               Costs shown are a prototype estimate. Annual commitment applies an estimated per-month discount for comparison.
             </div>
           </div>
+          )}
         </div>
 
         {/* KPIs */}
@@ -1510,14 +1625,19 @@ export default function Dashboard() {
                                     const isSuite = SUITE_LICENSES.has(license);
                                     const isNew = !originalUser.licenses.includes(license);
                                     return (
-                                      <Badge
-                                        key={`new-${i}`}
-                                        className={`text-xs w-fit cursor-pointer hover:opacity-80 transition-opacity ${isNew ? 'bg-primary/20 text-primary border-primary/20' : isSuite ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' : 'bg-secondary/50 border-border/40'}`}
-                                        onClick={() => navigate(`/licenses?compare=${encodeURIComponent(license)}`)}
-                                        data-testid={`badge-license-new-${i}`}
-                                      >
-                                        {license}
-                                      </Badge>
+                                      <Popover key={`new-${i}`}>
+                                        <PopoverTrigger asChild>
+                                          <Badge
+                                            className={`text-xs w-fit cursor-pointer hover:opacity-80 transition-opacity ${isNew ? 'bg-primary/20 text-primary border-primary/20' : isSuite ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' : 'bg-secondary/50 border-border/40'}`}
+                                            data-testid={`badge-license-new-${i}`}
+                                          >
+                                            {license}
+                                          </Badge>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-80" side="right" align="start">
+                                          <LicensePopoverContent licenseName={license} />
+                                        </PopoverContent>
+                                      </Popover>
                                     );
                                   })}
                                 </div>
@@ -1537,15 +1657,20 @@ export default function Dashboard() {
                                 {user.licenses.map((license, i) => {
                                   const isSuite = SUITE_LICENSES.has(license);
                                   return (
-                                    <Badge
-                                      key={i}
-                                      variant="outline"
-                                      className={`text-xs w-fit cursor-pointer hover:opacity-80 transition-opacity ${isSuite ? 'border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-300' : 'border-border/60'}`}
-                                      onClick={() => navigate(`/licenses?compare=${encodeURIComponent(license)}`)}
-                                      data-testid={`badge-license-${i}`}
-                                    >
-                                      {license}
-                                    </Badge>
+                                    <Popover key={i}>
+                                      <PopoverTrigger asChild>
+                                        <Badge
+                                          variant="outline"
+                                          className={`text-xs w-fit cursor-pointer hover:opacity-80 transition-opacity ${isSuite ? 'border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-300' : 'border-border/60'}`}
+                                          data-testid={`badge-license-${i}`}
+                                        >
+                                          {license}
+                                        </Badge>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-80" side="right" align="start">
+                                        <LicensePopoverContent licenseName={license} />
+                                      </PopoverContent>
+                                    </Popover>
                                   );
                                 })}
                               </div>
