@@ -1,7 +1,7 @@
-# M365 License & Usage Insights
+# Astra — M365 License & Usage Insights
 
 ## Overview
-A full-stack web application for Microsoft 365 license and mailbox usage analysis. Users from any M365 organization sign in via the Microsoft OAuth consent screen (one-click "Sign in with Microsoft" — no Azure setup required for end users). Alternatively, users can upload CSV/XLSX exports from the M365 Admin Center. The app merges data, provides licensing optimization strategies, and generates AI-powered executive summaries for C-Suite presentations.
+Astra is a full-stack web application for Microsoft 365 license and mailbox usage analysis. Users from any M365 organization sign in via the Microsoft OAuth consent screen (one-click "Sign in with Microsoft" — no Azure setup required for end users). Alternatively, users can upload CSV/XLSX exports from the M365 Admin Center. The app merges data, provides licensing optimization strategies, and generates AI-powered executive summaries for C-Suite presentations.
 
 ## Architecture
 - **Frontend**: React + TypeScript + Vite + Tailwind CSS v4 + shadcn/ui components

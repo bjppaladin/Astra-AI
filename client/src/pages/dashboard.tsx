@@ -667,7 +667,7 @@ export default function Dashboard() {
         
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <h2 className="text-3xl font-display font-semibold">Usage & Licensing Dashboard</h2>
+            <h2 className="text-3xl font-display font-semibold">Astra</h2>
             <p className="text-muted-foreground">Automated merge of Active Users and Mailbox Usage reports with actionable insights.</p>
           </div>
 
