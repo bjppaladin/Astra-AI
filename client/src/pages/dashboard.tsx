@@ -103,10 +103,15 @@ export default function Dashboard() {
   const [customRules, setCustomRules] = useState({
     upgradeUnderprovisioned: true,
     upgradeToE5Security: false,
+    upgradeBasicToStandard: true,
+    upgradeToBizPremiumSecurity: false,
     downgradeUnderutilizedE5: true,
     downgradeOverprovisionedE3: false,
+    downgradeUnderutilizedBizPremium: true,
+    downgradeBizStandardToBasic: false,
     removeUnusedAddons: true,
     consolidateOverlap: true,
+    removeRedundantAddons: true,
     addCopilotPowerUsers: false,
     usageThreshold: 20,
   });
@@ -307,18 +312,53 @@ export default function Dashboard() {
   const LICENSE_COSTS: Record<string, number> = {
     "Microsoft 365 E5": 57, "Microsoft 365 E3": 36, "Office 365 E5": 38,
     "Office 365 E3": 23, "Office 365 E1": 10, "Microsoft 365 F1": 2.25,
+    "Microsoft 365 F3": 8, "Office 365 F3": 4, "Microsoft 365 F5 Security": 12,
+    "Microsoft 365 F5 Compliance": 12,
     "Microsoft 365 Business Premium": 22, "Microsoft 365 Business Standard": 12.50,
-    "Microsoft 365 Business Basic": 6, "Microsoft 365 Copilot": 30,
-    "GitHub Copilot": 20, "Visio Plan 2": 15, "Project Plan 5": 55,
-    "Project Plan 3": 30, "Power BI Pro": 10, "Power BI Premium Per User": 20,
+    "Microsoft 365 Business Basic": 6, "Microsoft 365 Apps for business": 12.50,
+    "Microsoft 365 Apps for enterprise": 12, "Microsoft 365 Copilot": 30,
+    "GitHub Copilot": 20, "Visio Plan 2": 15, "Visio Plan 1": 5,
+    "Project Plan 5": 55, "Project Plan 3": 30, "Project Plan 1": 10,
+    "Power BI Pro": 10, "Power BI Premium Per User": 20, "Power BI Free": 0,
     "Exchange Online Plan 1": 4, "Exchange Online Plan 2": 8,
-    "Teams Exploratory": 0, "Power Automate Free": 0, "Power Apps Trial": 0, "Microsoft Stream": 0,
+    "Exchange Online Kiosk": 2, "Exchange Online Essentials": 2,
+    "Exchange Online Protection": 0,
+    "Defender for Office 365 P1": 2, "Defender for Office 365 P2": 5,
+    "Defender for Endpoint P1": 3, "Defender for Endpoint P2": 5.20,
+    "Defender for Business": 3, "Defender for Identity": 5.50,
+    "Defender for Cloud Apps": 3.50,
+    "Enterprise Mobility + Security E3": 11.60, "Enterprise Mobility + Security E5": 16.40,
+    "Entra ID P1": 6, "Entra ID P2": 9,
+    "Microsoft Intune Plan 1": 8,
+    "Azure Information Protection P1": 2, "Azure Information Protection P2": 5,
+    "Rights Management Adhoc": 0,
+    "Teams Phone System": 8, "Teams Phone System Virtual User": 0,
+    "Domestic Calling Plan": 12, "International Calling Plan": 24,
+    "Domestic Calling Plan (120 min)": 0, "Audio Conferencing": 4,
+    "Teams Rooms Standard": 15, "Teams Rooms Pro": 40,
+    "OneDrive for Business P1": 5, "OneDrive for Business P2": 0,
+    "SharePoint Online Plan 1": 5, "SharePoint Online Plan 2": 10,
+    "Microsoft 365 E5 Security": 12, "Microsoft 365 E5 Compliance": 12,
+    "Microsoft 365 F5 Security + Compliance": 12,
+    "Windows 10/11 Enterprise E3": 7, "Windows 10/11 Enterprise E5": 11,
+    "Windows Store for Business": 0,
+    "Power Apps per user": 20, "Power Apps per app": 5,
+    "Power Automate per user": 15,
+    "Dynamics 365 Customer Voice": 0, "Dynamics 365 Sales Professional": 65,
+    "Dynamics 365 Sales Enterprise": 95, "Dynamics 365 Plan": 115,
+    "Dynamics 365 Team Members": 8,
+    "Teams Exploratory": 0, "Microsoft Teams (Free)": 0, "Microsoft Teams Trial": 0,
+    "Power Automate Free": 0, "Power Apps Trial": 0, "Microsoft Stream": 0,
+    "Power Virtual Agents Trial": 0, "Communication Compliance": 0,
+    "Power Automate RPA Attended": 0, "Microsoft Clipchamp": 0, "Windows Autopatch": 0,
   };
 
   const SUITE_LICENSES = new Set([
     "Microsoft 365 E5", "Microsoft 365 E3", "Office 365 E5", "Office 365 E3",
-    "Office 365 E1", "Microsoft 365 F1", "Microsoft 365 Business Premium",
-    "Microsoft 365 Business Standard", "Microsoft 365 Business Basic",
+    "Office 365 E1", "Microsoft 365 F1", "Microsoft 365 F3", "Office 365 F3",
+    "Microsoft 365 Business Premium", "Microsoft 365 Business Standard",
+    "Microsoft 365 Business Basic", "Microsoft 365 Apps for enterprise",
+    "Microsoft 365 Apps for business",
   ]);
 
   const SECURITY_DEPTS = new Set(["IT", "Engineering", "Compliance", "Security", "InfoSec"]);
@@ -347,21 +387,27 @@ export default function Dashboard() {
       if (strat === "custom") return rules;
       if (strat === "security") return {
         upgradeUnderprovisioned: true, upgradeToE5Security: true,
+        upgradeBasicToStandard: false, upgradeToBizPremiumSecurity: true,
         downgradeUnderutilizedE5: false, downgradeOverprovisionedE3: false,
+        downgradeUnderutilizedBizPremium: false, downgradeBizStandardToBasic: false,
         removeUnusedAddons: false, consolidateOverlap: true,
-        addCopilotPowerUsers: true, usageThreshold: 10,
+        removeRedundantAddons: true, addCopilotPowerUsers: true, usageThreshold: 10,
       };
       if (strat === "cost") return {
         upgradeUnderprovisioned: false, upgradeToE5Security: false,
+        upgradeBasicToStandard: false, upgradeToBizPremiumSecurity: false,
         downgradeUnderutilizedE5: true, downgradeOverprovisionedE3: true,
+        downgradeUnderutilizedBizPremium: true, downgradeBizStandardToBasic: true,
         removeUnusedAddons: true, consolidateOverlap: true,
-        addCopilotPowerUsers: false, usageThreshold: 30,
+        removeRedundantAddons: true, addCopilotPowerUsers: false, usageThreshold: 30,
       };
       return {
         upgradeUnderprovisioned: true, upgradeToE5Security: false,
+        upgradeBasicToStandard: true, upgradeToBizPremiumSecurity: false,
         downgradeUnderutilizedE5: true, downgradeOverprovisionedE3: false,
+        downgradeUnderutilizedBizPremium: true, downgradeBizStandardToBasic: false,
         removeUnusedAddons: true, consolidateOverlap: true,
-        addCopilotPowerUsers: false, usageThreshold: 20,
+        removeRedundantAddons: true, addCopilotPowerUsers: false, usageThreshold: 20,
       };
     };
 
@@ -387,11 +433,32 @@ export default function Dashboard() {
       }
     }
 
+    if (r.upgradeBasicToStandard) {
+      if (newLicenses.includes("Microsoft 365 Business Basic") && hasMailboxData && usageRatio > 50) {
+        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Basic");
+        newLicenses.push("Microsoft 365 Business Standard");
+        reasons.push(`Business Basic at ${usageRatio.toFixed(0)}% usage — upgrade to Standard for desktop apps and advanced features`);
+      }
+    }
+
     if (r.upgradeToE5Security) {
       if (newLicenses.includes("Microsoft 365 E3") && isSecurityDept) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
         newLicenses.push("Microsoft 365 E5");
         reasons.push(`${user.department} dept needs advanced threat protection & compliance — upgrade to E5`);
+      }
+    }
+
+    if (r.upgradeToBizPremiumSecurity) {
+      if (newLicenses.includes("Microsoft 365 Business Standard") && isSecurityDept) {
+        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Standard");
+        newLicenses.push("Microsoft 365 Business Premium");
+        reasons.push(`${user.department} dept needs Intune, Defender & Conditional Access — upgrade to Business Premium`);
+      }
+      if (newLicenses.includes("Microsoft 365 Business Basic") && isSecurityDept) {
+        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Basic");
+        newLicenses.push("Microsoft 365 Business Premium");
+        reasons.push(`${user.department} dept needs Intune, Defender & Conditional Access — upgrade to Business Premium`);
       }
     }
 
@@ -412,6 +479,22 @@ export default function Dashboard() {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
         newLicenses.push("Microsoft 365 Business Standard");
         reasons.push(`E3 user at ${usageRatio.toFixed(0)}% usage in ${user.department} — Business Standard sufficient`);
+      }
+    }
+
+    if (r.downgradeUnderutilizedBizPremium && hasMailboxData) {
+      if (newLicenses.includes("Microsoft 365 Business Premium") && !isSecurityDept && usageRatio < effThreshold) {
+        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Premium");
+        newLicenses.push("Microsoft 365 Business Standard");
+        reasons.push(`Business Premium in ${user.department} at ${usageRatio.toFixed(0)}% usage — Standard sufficient for non-security dept`);
+      }
+    }
+
+    if (r.downgradeBizStandardToBasic && hasMailboxData) {
+      if (newLicenses.includes("Microsoft 365 Business Standard") && usageRatio < effThreshold && !isSecurityDept) {
+        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Standard");
+        newLicenses.push("Microsoft 365 Business Basic");
+        reasons.push(`Business Standard at ${usageRatio.toFixed(0)}% usage in ${user.department} — Business Basic sufficient`);
       }
     }
 
@@ -436,18 +519,61 @@ export default function Dashboard() {
       }
     }
 
+    if (r.removeRedundantAddons) {
+      const hasBizPremium = newLicenses.includes("Microsoft 365 Business Premium");
+      const hasE5 = newLicenses.includes("Microsoft 365 E5");
+      if ((hasBizPremium || hasE5) && newLicenses.includes("Defender for Office 365 P1")) {
+        newLicenses = newLicenses.filter(l => l !== "Defender for Office 365 P1");
+        reasons.push(`Defender for Office 365 P1 redundant — already included in ${hasBizPremium ? "Business Premium" : "E5"}`);
+      }
+      if (hasE5 && newLicenses.includes("Defender for Office 365 P2")) {
+        newLicenses = newLicenses.filter(l => l !== "Defender for Office 365 P2");
+        reasons.push(`Defender for Office 365 P2 redundant — already included in E5`);
+      }
+      const hasAnySuite = newLicenses.some(l => SUITE_LICENSES.has(l));
+      if (hasAnySuite && newLicenses.includes("OneDrive for Business P2")) {
+        newLicenses = newLicenses.filter(l => l !== "OneDrive for Business P2");
+        reasons.push(`OneDrive standalone redundant — already included in suite license`);
+      }
+      if (hasAnySuite && newLicenses.includes("OneDrive for Business P1")) {
+        newLicenses = newLicenses.filter(l => l !== "OneDrive for Business P1");
+        reasons.push(`OneDrive standalone redundant — already included in suite license`);
+      }
+      const hasEMSE3orHigher = newLicenses.some(l => ["Enterprise Mobility + Security E3", "Enterprise Mobility + Security E5", "Microsoft 365 E3", "Microsoft 365 E5"].includes(l));
+      if (hasEMSE3orHigher && newLicenses.includes("Entra ID P1")) {
+        newLicenses = newLicenses.filter(l => l !== "Entra ID P1");
+        reasons.push(`Entra ID P1 redundant — already included in suite or EMS license`);
+      }
+      if (hasEMSE3orHigher && newLicenses.includes("Microsoft Intune Plan 1")) {
+        newLicenses = newLicenses.filter(l => l !== "Microsoft Intune Plan 1");
+        reasons.push(`Intune Plan 1 redundant — already included in suite or EMS license`);
+      }
+    }
+
     if (r.consolidateOverlap) {
-      const hasE3orHigher = newLicenses.some(l => ["Microsoft 365 E3", "Microsoft 365 E5", "Office 365 E3", "Office 365 E5"].includes(l));
-      if (hasE3orHigher && newLicenses.includes("Exchange Online Plan 1")) {
+      const hasSuiteWithExchange = newLicenses.some(l => [
+        "Microsoft 365 E3", "Microsoft 365 E5", "Office 365 E3", "Office 365 E5",
+        "Microsoft 365 Business Basic", "Microsoft 365 Business Standard", "Microsoft 365 Business Premium",
+      ].includes(l));
+      if (hasSuiteWithExchange && newLicenses.includes("Exchange Online Plan 1")) {
         newLicenses = newLicenses.filter(l => l !== "Exchange Online Plan 1");
         reasons.push(`Exchange Online Plan 1 redundant — already included in suite license`);
       }
-      if (hasE3orHigher && newLicenses.includes("Exchange Online Plan 2")) {
+      if (hasSuiteWithExchange && newLicenses.includes("Exchange Online Plan 2")) {
         newLicenses = newLicenses.filter(l => l !== "Exchange Online Plan 2");
         reasons.push(`Exchange Online Plan 2 redundant — already included in suite license`);
       }
-      const freeTrials = newLicenses.filter(l => ["Teams Exploratory", "Power Automate Free", "Power Apps Trial", "Microsoft Stream"].includes(l));
-      if (hasE3orHigher && freeTrials.length > 0) {
+      if (hasSuiteWithExchange && newLicenses.includes("Exchange Online Kiosk")) {
+        newLicenses = newLicenses.filter(l => l !== "Exchange Online Kiosk");
+        reasons.push(`Exchange Online Kiosk redundant — already included in suite license`);
+      }
+      const freeTrials = newLicenses.filter(l => [
+        "Teams Exploratory", "Power Automate Free", "Power Apps Trial", "Microsoft Stream",
+        "Microsoft Teams (Free)", "Microsoft Teams Trial", "Power Virtual Agents Trial",
+        "Microsoft Clipchamp", "Windows Autopatch", "Power Automate RPA Attended",
+        "Communication Compliance", "Rights Management Adhoc",
+      ].includes(l));
+      if (hasSuiteWithExchange && freeTrials.length > 0) {
         newLicenses = newLicenses.filter(l => !freeTrials.includes(l));
         reasons.push(`Removed ${freeTrials.length} trial/free license(s) — functionality covered by suite`);
       }
@@ -1094,7 +1220,9 @@ export default function Dashboard() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {[
                       { key: 'upgradeUnderprovisioned', label: 'Upgrade underprovisioned users', hint: 'E1 users with >50% mailbox usage get E3; F1 users with >30% get Business Basic.' },
+                      { key: 'upgradeBasicToStandard', label: 'Upgrade Business Basic to Standard', hint: 'High-usage Basic users benefit from desktop apps and advanced features.' },
                       { key: 'upgradeToE5Security', label: 'Upgrade security depts to E5', hint: 'IT, Engineering, Compliance, Security staff get E5 for advanced threat protection.' },
+                      { key: 'upgradeToBizPremiumSecurity', label: 'Upgrade to Business Premium for security', hint: 'Security-sensitive depts get Intune, Defender & Conditional Access.' },
                       { key: 'addCopilotPowerUsers', label: 'Add Copilot for power users', hint: 'GitHub Copilot for Engineering, M365 Copilot for IT/Design/Analytics power users.' },
                     ].map((r) => (
                       <button
@@ -1123,7 +1251,10 @@ export default function Dashboard() {
                     {[
                       { key: 'downgradeUnderutilizedE5', label: 'Downgrade underutilized E5', hint: 'E5 users in non-security depts with low usage move to E3.' },
                       { key: 'downgradeOverprovisionedE3', label: 'Downgrade overprovisioned E3', hint: 'E3 users with low usage in non-security depts move to Business Standard.' },
+                      { key: 'downgradeUnderutilizedBizPremium', label: 'Downgrade underutilized Business Premium', hint: 'Non-security depts with low usage move from Premium to Standard.' },
+                      { key: 'downgradeBizStandardToBasic', label: 'Downgrade underutilized Standard to Basic', hint: 'Low-usage users in non-security depts move from Standard to Basic.' },
                       { key: 'removeUnusedAddons', label: 'Remove unused add-ons', hint: 'Strip Visio, Project, Power BI Premium from non-relevant departments.' },
+                      { key: 'removeRedundantAddons', label: 'Remove redundant add-ons', hint: 'Remove Defender, OneDrive, Intune add-ons already included in suite.' },
                       { key: 'consolidateOverlap', label: 'Consolidate overlapping licenses', hint: 'Remove standalone Exchange, trials, and free licenses covered by suites.' },
                     ].map((r) => (
                       <button
