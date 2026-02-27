@@ -22,6 +22,9 @@ import {
   LogIn,
   LogOut,
   Cloud,
+  ChevronDown,
+  ChevronUp,
+  Package,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +48,7 @@ import {
   getMicrosoftLoginUrl,
   disconnectMicrosoft,
   syncMicrosoftData,
+  fetchSubscriptions,
 } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
@@ -88,6 +92,13 @@ export default function Dashboard() {
     tenantId?: string;
   }>({ configured: false, connected: false });
   const [msLoading, setMsLoading] = useState(false);
+  const [subscriptions, setSubscriptions] = useState<{
+    skuId: string; skuPartNumber: string; displayName: string;
+    costPerUser: number; enabled: number; consumed: number;
+    available: number; capabilityStatus: string; appliesTo: string;
+  }[]>([]);
+  const [showSubscriptions, setShowSubscriptions] = useState(false);
+  const [subsLoading, setSubsLoading] = useState(false);
 
   const [customRules, setCustomRules] = useState({
     upgradeUnderprovisioned: true,
@@ -240,6 +251,25 @@ export default function Dashboard() {
       setIsSyncing(false);
     }
   };
+
+  const loadSubscriptions = useCallback(async () => {
+    if (!msAuth.connected) return;
+    setSubsLoading(true);
+    try {
+      const result = await fetchSubscriptions();
+      setSubscriptions(result.subscriptions);
+    } catch (err: any) {
+      console.error("Failed to load subscriptions:", err.message);
+    } finally {
+      setSubsLoading(false);
+    }
+  }, [msAuth.connected]);
+
+  useEffect(() => {
+    if (msAuth.connected && subscriptions.length === 0) {
+      loadSubscriptions();
+    }
+  }, [msAuth.connected]);
 
   const handleSync = () => {
     if (msAuth.connected) {
@@ -856,6 +886,139 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Tenant Subscriptions */}
+        {(subscriptions.length > 0 || msAuth.connected) && (
+          <Card className="border-border/50 shadow-sm">
+            <CardHeader
+              className="cursor-pointer py-3 px-6"
+              onClick={() => setShowSubscriptions(!showSubscriptions)}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 rounded-md bg-primary/10">
+                    <Package className="h-4 w-4 text-primary" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-base">Tenant Subscriptions</CardTitle>
+                    <CardDescription className="text-xs">
+                      {subscriptions.length > 0
+                        ? `${subscriptions.length} subscription${subscriptions.length !== 1 ? 's' : ''} · ${subscriptions.reduce((a, s) => a + s.consumed, 0)} total assigned licenses`
+                        : "Connect to Microsoft 365 to view subscriptions"}
+                    </CardDescription>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {msAuth.connected && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={(e) => { e.stopPropagation(); loadSubscriptions(); }}
+                      disabled={subsLoading}
+                      data-testid="button-refresh-subs"
+                    >
+                      <RefreshCcw className={`h-3 w-3 mr-1 ${subsLoading ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </Button>
+                  )}
+                  {showSubscriptions ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                </div>
+              </div>
+            </CardHeader>
+            {showSubscriptions && (
+              <CardContent className="pt-0 px-6 pb-4">
+                {subsLoading ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <Skeleton key={i} className="h-10 w-full" />
+                    ))}
+                  </div>
+                ) : subscriptions.length === 0 ? (
+                  <div className="text-sm text-muted-foreground text-center py-6">
+                    {msAuth.connected ? "No subscriptions found. Click Refresh to try again." : "Sign in with Microsoft 365 to load tenant subscriptions."}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader className="bg-muted/30">
+                        <TableRow>
+                          <TableHead>Subscription</TableHead>
+                          <TableHead className="text-center">Status</TableHead>
+                          <TableHead className="text-right">Purchased</TableHead>
+                          <TableHead className="text-right">Assigned</TableHead>
+                          <TableHead className="text-right">Available</TableHead>
+                          <TableHead className="text-right">Utilization</TableHead>
+                          <TableHead className="text-right">Cost/User</TableHead>
+                          <TableHead className="text-right">Monthly Spend</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {subscriptions
+                          .sort((a, b) => (b.consumed * b.costPerUser) - (a.consumed * a.costPerUser))
+                          .map((sub) => {
+                            const utilization = sub.enabled > 0 ? (sub.consumed / sub.enabled) * 100 : 0;
+                            const monthlySpend = sub.consumed * sub.costPerUser;
+                            return (
+                              <TableRow key={sub.skuId} data-testid={`row-sub-${sub.skuId}`}>
+                                <TableCell>
+                                  <div className="font-medium text-sm">{sub.displayName}</div>
+                                  <div className="text-xs text-muted-foreground">{sub.skuPartNumber}</div>
+                                </TableCell>
+                                <TableCell className="text-center">
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-xs ${sub.capabilityStatus === 'Enabled' ? 'border-green-500/30 text-green-600 bg-green-500/5' : sub.capabilityStatus === 'Warning' ? 'border-amber-500/30 text-amber-600 bg-amber-500/5' : 'border-red-500/30 text-red-600 bg-red-500/5'}`}
+                                  >
+                                    {sub.capabilityStatus}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right font-medium">{sub.enabled.toLocaleString()}</TableCell>
+                                <TableCell className="text-right">{sub.consumed.toLocaleString()}</TableCell>
+                                <TableCell className="text-right">
+                                  <span className={sub.available <= 0 ? 'text-destructive font-medium' : sub.available <= 5 ? 'text-amber-600' : ''}>
+                                    {sub.available.toLocaleString()}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <div className="w-16 h-1.5 bg-secondary rounded-full overflow-hidden">
+                                      <div
+                                        className={`h-full rounded-full ${utilization > 90 ? 'bg-destructive' : utilization > 70 ? 'bg-amber-500' : 'bg-primary'}`}
+                                        style={{ width: `${Math.min(utilization, 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs w-10 text-right">{utilization.toFixed(0)}%</span>
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-right text-xs text-muted-foreground">
+                                  {sub.costPerUser > 0 ? `$${sub.costPerUser.toFixed(2)}` : 'Free'}
+                                </TableCell>
+                                <TableCell className="text-right font-medium">
+                                  {monthlySpend > 0 ? `$${monthlySpend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        <TableRow className="bg-muted/20 font-medium">
+                          <TableCell colSpan={2}>Total</TableCell>
+                          <TableCell className="text-right">{subscriptions.reduce((a, s) => a + s.enabled, 0).toLocaleString()}</TableCell>
+                          <TableCell className="text-right">{subscriptions.reduce((a, s) => a + s.consumed, 0).toLocaleString()}</TableCell>
+                          <TableCell className="text-right">{subscriptions.reduce((a, s) => a + s.available, 0).toLocaleString()}</TableCell>
+                          <TableCell />
+                          <TableCell />
+                          <TableCell className="text-right">
+                            ${subscriptions.reduce((a, s) => a + (s.consumed * s.costPerUser), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            )}
+          </Card>
+        )}
 
         {/* Strategy Selector */}
         <div className="space-y-4">

@@ -276,6 +276,27 @@ export async function fetchActiveUserDetailReport(accessToken: string): Promise<
   return result;
 }
 
+export async function fetchSubscribedSkus(accessToken: string): Promise<any[]> {
+  const data = await graphFetch(accessToken, `${GRAPH_BASE}/subscribedSkus?$select=skuId,skuPartNumber,prepaidUnits,consumedUnits,capabilityStatus,appliesTo`);
+  const skus = data.value || [];
+  return skus.map((sku: any) => {
+    const mapped = SKU_MAP[sku.skuPartNumber];
+    const enabled = sku.prepaidUnits?.enabled ?? 0;
+    const consumed = sku.consumedUnits ?? 0;
+    return {
+      skuId: sku.skuId,
+      skuPartNumber: sku.skuPartNumber,
+      displayName: mapped?.name || sku.skuPartNumber,
+      costPerUser: mapped?.cost ?? 0,
+      enabled,
+      consumed,
+      available: enabled - consumed,
+      capabilityStatus: sku.capabilityStatus || "Enabled",
+      appliesTo: sku.appliesTo || "User",
+    };
+  });
+}
+
 export async function fetchM365Data(accessToken: string): Promise<any[]> {
   const [users, mailboxMap] = await Promise.all([
     fetchLicensedUsers(accessToken),

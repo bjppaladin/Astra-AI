@@ -14,6 +14,7 @@ import {
   getCurrentUser,
   fetchM365Data,
   fetchActiveUserDetailReport,
+  fetchSubscribedSkus,
 } from "./microsoft-graph";
 
 const openrouter = new OpenAI({
@@ -320,6 +321,26 @@ export async function registerRoutes(
     } catch (err: any) {
       console.error("Report error:", err.message);
       res.status(500).json({ error: `Failed to get report: ${err.message}` });
+    }
+  });
+
+  app.get("/api/microsoft/subscriptions", async (req, res) => {
+    const sessionId = req.session?.microsoftSessionId;
+    if (!sessionId) return res.status(401).json({ error: "Not connected to Microsoft 365" });
+
+    const token = await getValidToken(sessionId);
+    if (!token) return res.status(401).json({ error: "Session expired. Please reconnect." });
+
+    const stored = tokenStore.get(sessionId);
+    try {
+      const subscriptions = await fetchSubscribedSkus(token);
+      res.json({
+        subscriptions,
+        tenantId: stored?.tenantId,
+      });
+    } catch (err: any) {
+      console.error("Subscriptions error:", err.message);
+      res.status(500).json({ error: `Failed to fetch subscriptions: ${err.message}` });
     }
   });
 

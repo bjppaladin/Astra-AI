@@ -78,6 +78,28 @@ export async function uploadMailboxFile(file: File): Promise<{
   return res.json();
 }
 
+export async function fetchSubscriptions(): Promise<{
+  subscriptions: {
+    skuId: string;
+    skuPartNumber: string;
+    displayName: string;
+    costPerUser: number;
+    enabled: number;
+    consumed: number;
+    available: number;
+    capabilityStatus: string;
+    appliesTo: string;
+  }[];
+  tenantId?: string;
+}> {
+  const res = await fetch("/api/microsoft/subscriptions");
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to fetch subscriptions");
+  }
+  return res.json();
+}
+
 export async function saveReport(data: {
   name: string;
   strategy: string;
