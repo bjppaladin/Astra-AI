@@ -86,12 +86,14 @@ export default function Dashboard() {
   const [msLoading, setMsLoading] = useState(false);
 
   const [customRules, setCustomRules] = useState({
-    upgradeE1ToE3: true,
-    upgradeE3ToE5: false,
-    downgradeE5ToE3NonCore: false,
-    removeVisio: false,
-    removeProject: false,
-    addCopilotEngineering: false,
+    upgradeUnderprovisioned: true,
+    upgradeToE5Security: false,
+    downgradeUnderutilizedE5: true,
+    downgradeOverprovisionedE3: false,
+    removeUnusedAddons: true,
+    consolidateOverlap: true,
+    addCopilotPowerUsers: false,
+    usageThreshold: 20,
   });
 
   const checkAuthStatus = useCallback(async () => {
@@ -268,70 +270,184 @@ export default function Dashboard() {
     XLSX.writeFile(wb, fileName);
   };
 
-  // Apply Optimization Logic
-  const optimizedData = useMemo(() => {
-    if (strategy === "current") return data;
+  const LICENSE_COSTS: Record<string, number> = {
+    "Microsoft 365 E5": 57, "Microsoft 365 E3": 36, "Office 365 E5": 38,
+    "Office 365 E3": 23, "Office 365 E1": 10, "Microsoft 365 F1": 2.25,
+    "Microsoft 365 Business Premium": 22, "Microsoft 365 Business Standard": 12.50,
+    "Microsoft 365 Business Basic": 6, "Microsoft 365 Copilot": 30,
+    "GitHub Copilot": 20, "Visio Plan 2": 15, "Project Plan 5": 55,
+    "Project Plan 3": 30, "Power BI Pro": 10, "Power BI Premium Per User": 20,
+    "Exchange Online Plan 1": 4, "Exchange Online Plan 2": 8,
+    "Teams Exploratory": 0, "Power Automate Free": 0, "Power Apps Trial": 0, "Microsoft Stream": 0,
+  };
 
-    const rules =
-      strategy === "custom"
-        ? customRules
-        : {
-            upgradeE1ToE3: strategy === "security" || strategy === "balanced",
-            upgradeE3ToE5: strategy === "security",
-            downgradeE5ToE3NonCore: strategy === "cost" || strategy === "balanced",
-            removeVisio: strategy === "cost",
-            removeProject: strategy === "cost",
-            addCopilotEngineering: strategy === "security",
-          };
+  const SUITE_LICENSES = new Set([
+    "Microsoft 365 E5", "Microsoft 365 E3", "Office 365 E5", "Office 365 E3",
+    "Office 365 E1", "Microsoft 365 F1", "Microsoft 365 Business Premium",
+    "Microsoft 365 Business Standard", "Microsoft 365 Business Basic",
+  ]);
 
-    return data.map((user) => {
-      let newLicenses = [...user.licenses];
-      let newCost = user.cost;
+  const SECURITY_DEPTS = new Set(["IT", "Engineering", "Compliance", "Security", "InfoSec"]);
 
-      if (rules.upgradeE1ToE3 && newLicenses.includes("Office 365 E1")) {
-        newLicenses = newLicenses.filter((l) => l !== "Office 365 E1");
+  const sortLicenses = (licenses: string[]) => {
+    const suites = licenses.filter(l => SUITE_LICENSES.has(l)).sort();
+    const addons = licenses.filter(l => !SUITE_LICENSES.has(l)).sort();
+    return [...suites, ...addons];
+  };
+
+  type UserRec = { licenses: string[]; cost: number; reasons: string[] };
+
+  const computeCost = (licenses: string[]) => {
+    return licenses.reduce((sum, l) => sum + (LICENSE_COSTS[l] ?? 0), 0);
+  };
+
+  const analyzeUser = useCallback((user: typeof mockData[0], strat: Strategy, rules: typeof customRules): UserRec => {
+    let newLicenses = [...user.licenses];
+    const reasons: string[] = [];
+    const hasMailboxData = user.maxGB > 0;
+    const usageRatio = hasMailboxData ? (user.usageGB / user.maxGB) * 100 : -1;
+    const isSecurityDept = SECURITY_DEPTS.has(user.department);
+    const threshold = rules.usageThreshold;
+
+    const getRulesForStrategy = (): typeof customRules => {
+      if (strat === "custom") return rules;
+      if (strat === "security") return {
+        upgradeUnderprovisioned: true, upgradeToE5Security: true,
+        downgradeUnderutilizedE5: false, downgradeOverprovisionedE3: false,
+        removeUnusedAddons: false, consolidateOverlap: true,
+        addCopilotPowerUsers: true, usageThreshold: 10,
+      };
+      if (strat === "cost") return {
+        upgradeUnderprovisioned: false, upgradeToE5Security: false,
+        downgradeUnderutilizedE5: true, downgradeOverprovisionedE3: true,
+        removeUnusedAddons: true, consolidateOverlap: true,
+        addCopilotPowerUsers: false, usageThreshold: 30,
+      };
+      return {
+        upgradeUnderprovisioned: true, upgradeToE5Security: false,
+        downgradeUnderutilizedE5: true, downgradeOverprovisionedE3: false,
+        removeUnusedAddons: true, consolidateOverlap: true,
+        addCopilotPowerUsers: false, usageThreshold: 20,
+      };
+    };
+
+    const r = getRulesForStrategy();
+    const effThreshold = strat === "custom" ? threshold : r.usageThreshold;
+
+    if (r.upgradeUnderprovisioned) {
+      if (newLicenses.includes("Office 365 E1") && hasMailboxData && usageRatio > 50) {
+        newLicenses = newLicenses.filter(l => l !== "Office 365 E1");
         newLicenses.push("Microsoft 365 E3");
-        newCost += 26;
+        reasons.push(`Mailbox at ${usageRatio.toFixed(0)}% — E1 lacks security features needed at this usage level; upgrade to E3`);
+      } else if (newLicenses.includes("Office 365 E1")) {
+        if (strat === "security") {
+          newLicenses = newLicenses.filter(l => l !== "Office 365 E1");
+          newLicenses.push("Microsoft 365 E3");
+          reasons.push(`E1 lacks MFA, DLP, and compliance tools — upgrade to E3 for baseline security`);
+        }
       }
+      if (newLicenses.includes("Microsoft 365 F1") && hasMailboxData && usageRatio > 30) {
+        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 F1");
+        newLicenses.push("Microsoft 365 Business Basic");
+        reasons.push(`F1 user with ${usageRatio.toFixed(0)}% mailbox usage — needs full mailbox access; upgrade to Business Basic`);
+      }
+    }
 
-      if (rules.upgradeE3ToE5 && newLicenses.includes("Microsoft 365 E3")) {
-        newLicenses = newLicenses.filter((l) => l !== "Microsoft 365 E3");
+    if (r.upgradeToE5Security) {
+      if (newLicenses.includes("Microsoft 365 E3") && isSecurityDept) {
+        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
         newLicenses.push("Microsoft 365 E5");
-        newCost += 21;
+        reasons.push(`${user.department} dept needs advanced threat protection & compliance — upgrade to E5`);
       }
+    }
 
-      if (
-        rules.downgradeE5ToE3NonCore &&
-        newLicenses.includes("Microsoft 365 E5") &&
-        !["IT", "Engineering"].includes(user.department)
-      ) {
-        newLicenses = newLicenses.filter((l) => l !== "Microsoft 365 E5");
+    if (r.downgradeUnderutilizedE5 && hasMailboxData) {
+      if (newLicenses.includes("Microsoft 365 E5") && !isSecurityDept && usageRatio < effThreshold) {
+        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E5");
         newLicenses.push("Microsoft 365 E3");
-        newCost -= 21;
+        reasons.push(`E5 in ${user.department} with only ${usageRatio.toFixed(0)}% usage — E3 covers needs`);
+      } else if (newLicenses.includes("Office 365 E5") && !isSecurityDept && usageRatio < effThreshold) {
+        newLicenses = newLicenses.filter(l => l !== "Office 365 E5");
+        newLicenses.push("Office 365 E3");
+        reasons.push(`Office 365 E5 in ${user.department} at ${usageRatio.toFixed(0)}% usage — downgrade to E3`);
       }
+    }
 
-      if (rules.removeVisio && newLicenses.includes("Visio Plan 2")) {
-        newLicenses = newLicenses.filter((l) => l !== "Visio Plan 2");
-        newCost -= 15;
+    if (r.downgradeOverprovisionedE3 && hasMailboxData) {
+      if (newLicenses.includes("Microsoft 365 E3") && usageRatio < effThreshold && !isSecurityDept) {
+        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
+        newLicenses.push("Microsoft 365 Business Standard");
+        reasons.push(`E3 user at ${usageRatio.toFixed(0)}% usage in ${user.department} — Business Standard sufficient`);
       }
+    }
 
-      if (rules.removeProject && newLicenses.includes("Project Plan 3")) {
-        newLicenses = newLicenses.filter((l) => l !== "Project Plan 3");
-        newCost -= 30;
+    if (r.removeUnusedAddons) {
+      if (newLicenses.includes("Visio Plan 2") && !["Engineering", "Architecture", "Design", "PMO"].includes(user.department)) {
+        newLicenses = newLicenses.filter(l => l !== "Visio Plan 2");
+        reasons.push(`Visio Plan 2 in ${user.department} — not a typical Visio department`);
       }
-
-      if (
-        rules.addCopilotEngineering &&
-        user.department === "Engineering" &&
-        !newLicenses.includes("GitHub Copilot")
-      ) {
-        newLicenses.push("GitHub Copilot");
-        newCost += 20;
+      if (newLicenses.includes("Project Plan 3") && hasMailboxData && usageRatio < effThreshold && !["PMO", "IT", "Engineering"].includes(user.department)) {
+        newLicenses = newLicenses.filter(l => l !== "Project Plan 3");
+        reasons.push(`Project Plan 3 with low activity in ${user.department} — remove unused add-on`);
       }
+      if (newLicenses.includes("Project Plan 5") && !["PMO", "IT"].includes(user.department)) {
+        newLicenses = newLicenses.filter(l => l !== "Project Plan 5");
+        newLicenses.push("Project Plan 3");
+        reasons.push(`Project Plan 5 in ${user.department} — Plan 3 sufficient for non-PMO`);
+      }
+      if (newLicenses.includes("Power BI Premium Per User") && !["Finance", "Analytics", "IT", "Engineering"].includes(user.department)) {
+        newLicenses = newLicenses.filter(l => l !== "Power BI Premium Per User");
+        newLicenses.push("Power BI Pro");
+        reasons.push(`Power BI Premium in ${user.department} — Pro tier sufficient`);
+      }
+    }
 
-      return { ...user, licenses: newLicenses, cost: newCost };
+    if (r.consolidateOverlap) {
+      const hasE3orHigher = newLicenses.some(l => ["Microsoft 365 E3", "Microsoft 365 E5", "Office 365 E3", "Office 365 E5"].includes(l));
+      if (hasE3orHigher && newLicenses.includes("Exchange Online Plan 1")) {
+        newLicenses = newLicenses.filter(l => l !== "Exchange Online Plan 1");
+        reasons.push(`Exchange Online Plan 1 redundant — already included in suite license`);
+      }
+      if (hasE3orHigher && newLicenses.includes("Exchange Online Plan 2")) {
+        newLicenses = newLicenses.filter(l => l !== "Exchange Online Plan 2");
+        reasons.push(`Exchange Online Plan 2 redundant — already included in suite license`);
+      }
+      const freeTrials = newLicenses.filter(l => ["Teams Exploratory", "Power Automate Free", "Power Apps Trial", "Microsoft Stream"].includes(l));
+      if (hasE3orHigher && freeTrials.length > 0) {
+        newLicenses = newLicenses.filter(l => !freeTrials.includes(l));
+        reasons.push(`Removed ${freeTrials.length} trial/free license(s) — functionality covered by suite`);
+      }
+    }
+
+    if (r.addCopilotPowerUsers) {
+      const powerUserDepts = new Set(["Engineering", "IT", "Design", "Analytics"]);
+      if (powerUserDepts.has(user.department) && hasMailboxData && usageRatio > 50 && !newLicenses.includes("GitHub Copilot") && !newLicenses.includes("Microsoft 365 Copilot")) {
+        if (user.department === "Engineering") {
+          newLicenses.push("GitHub Copilot");
+          reasons.push(`High-activity Engineering user — GitHub Copilot boosts developer productivity`);
+        } else {
+          newLicenses.push("Microsoft 365 Copilot");
+          reasons.push(`High-activity ${user.department} power user — M365 Copilot accelerates productivity`);
+        }
+      }
+    }
+
+    const finalLicenses = sortLicenses(newLicenses);
+    const newCost = computeCost(finalLicenses);
+    return { licenses: finalLicenses, cost: newCost, reasons };
+  }, []);
+
+  const analyzeAllUsers = useCallback((strat: Strategy, rules: typeof customRules) => {
+    return data.map(user => {
+      if (strat === "current") return { ...user, licenses: sortLicenses(user.licenses), reasons: [] as string[] };
+      const rec = analyzeUser(user, strat, rules);
+      return { ...user, ...rec };
     });
-  }, [customRules, data, strategy]);
+  }, [data, analyzeUser]);
+
+  const optimizedData = useMemo(() => {
+    return analyzeAllUsers(strategy, customRules);
+  }, [strategy, customRules, analyzeAllUsers]);
 
   const filteredData = optimizedData.filter(item => 
     item.displayName.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -339,53 +455,19 @@ export default function Dashboard() {
     item.department.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const applyRules = (rules: typeof customRules) => {
-    return data.map((user) => {
-      let newLicenses = [...user.licenses];
-      let newCost = user.cost;
-      if (rules.upgradeE1ToE3 && newLicenses.includes("Office 365 E1")) {
-        newLicenses = newLicenses.filter((l) => l !== "Office 365 E1");
-        newLicenses.push("Microsoft 365 E3");
-        newCost += 26;
-      }
-      if (rules.upgradeE3ToE5 && newLicenses.includes("Microsoft 365 E3")) {
-        newLicenses = newLicenses.filter((l) => l !== "Microsoft 365 E3");
-        newLicenses.push("Microsoft 365 E5");
-        newCost += 21;
-      }
-      if (rules.downgradeE5ToE3NonCore && newLicenses.includes("Microsoft 365 E5") && !["IT", "Engineering"].includes(user.department)) {
-        newLicenses = newLicenses.filter((l) => l !== "Microsoft 365 E5");
-        newLicenses.push("Microsoft 365 E3");
-        newCost -= 21;
-      }
-      if (rules.removeVisio && newLicenses.includes("Visio Plan 2")) {
-        newLicenses = newLicenses.filter((l) => l !== "Visio Plan 2");
-        newCost -= 15;
-      }
-      if (rules.removeProject && newLicenses.includes("Project Plan 3")) {
-        newLicenses = newLicenses.filter((l) => l !== "Project Plan 3");
-        newCost -= 30;
-      }
-      if (rules.addCopilotEngineering && user.department === "Engineering" && !newLicenses.includes("GitHub Copilot")) {
-        newLicenses.push("GitHub Copilot");
-        newCost += 20;
-      }
-      return { ...user, licenses: newLicenses, cost: newCost };
-    });
-  };
+  const getStrategyStats = useCallback((strat: Strategy) => {
+    const result = analyzeAllUsers(strat, customRules);
+    const baseCost = data.reduce((a, c) => a + c.cost, 0);
+    const newCost = result.reduce((a, c) => a + c.cost, 0);
+    const affected = result.filter((u, i) => JSON.stringify(sortLicenses(data[i]?.licenses || [])) !== JSON.stringify(u.licenses)).length;
+    const upgrades = result.reduce((a, u) => a + u.reasons.filter(r => r.toLowerCase().includes("upgrade")).length, 0);
+    const downgrades = result.reduce((a, u) => a + u.reasons.filter(r => r.toLowerCase().includes("downgrade") || r.toLowerCase().includes("remove") || r.toLowerCase().includes("redundant")).length, 0);
+    return { baseCost, newCost, delta: newCost - baseCost, affected, upgrades, downgrades };
+  }, [analyzeAllUsers, customRules, data]);
 
-  const costForStrategy = (strat: Strategy) => {
-    if (strat === "current") return data.reduce((a, c) => a + c.cost, 0);
-    const rules = strat === "custom" ? customRules : {
-      upgradeE1ToE3: strat === "security" || strat === "balanced",
-      upgradeE3ToE5: strat === "security",
-      downgradeE5ToE3NonCore: strat === "cost" || strat === "balanced",
-      removeVisio: strat === "cost",
-      removeProject: strat === "cost",
-      addCopilotEngineering: strat === "security",
-    };
-    return applyRules(rules).reduce((a, c) => a + c.cost, 0);
-  };
+  const costForStrategy = useCallback((strat: Strategy) => {
+    return getStrategyStats(strat).newCost;
+  }, [getStrategyStats]);
 
   const baseTotalCost = data.reduce((acc, curr) => acc + curr.cost, 0);
   const projectedTotalCost = optimizedData.reduce((acc, curr) => acc + curr.cost, 0);
@@ -756,145 +838,140 @@ export default function Dashboard() {
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <h3 className="text-lg font-semibold font-display">Optimization Strategy</h3>
-            <Badge variant="secondary" className="font-normal text-xs">AI Recommended</Badge>
+            <Badge variant="secondary" className="font-normal text-xs">Usage-Aware</Badge>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${strategy === 'current' ? 'ring-2 ring-primary border-primary' : 'border-border/50'}`}
-              onClick={() => setStrategy('current')}
-              data-testid="strategy-current"
-            >
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <div className={`p-1.5 rounded-md ${strategy === 'current' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                    <CheckCircle2 className="h-4 w-4" />
-                  </div>
-                  Current State
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-2">
-                <CardDescription>Keep existing license assignments with no changes.</CardDescription>
-              </CardContent>
-            </Card>
-
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${strategy === 'security' ? 'ring-2 ring-primary border-primary' : 'border-border/50'}`}
-              onClick={() => setStrategy('security')}
-              data-testid="strategy-security"
-            >
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <div className={`p-1.5 rounded-md ${strategy === 'security' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                    <Shield className="h-4 w-4" />
-                  </div>
-                  Maximize Security
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-2">
-                <CardDescription>Upgrade users to E5 and add Copilot where applicable.</CardDescription>
-              </CardContent>
-            </Card>
-
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${strategy === 'cost' ? 'ring-2 ring-primary border-primary' : 'border-border/50'}`}
-              onClick={() => setStrategy('cost')}
-              data-testid="strategy-cost"
-            >
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <div className={`p-1.5 rounded-md ${strategy === 'cost' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                    <TrendingDown className="h-4 w-4" />
-                  </div>
-                  Minimize Cost
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-2">
-                <CardDescription>Downgrade unused E5s and remove expensive add-ons.</CardDescription>
-              </CardContent>
-            </Card>
-
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${strategy === 'balanced' ? 'ring-2 ring-primary border-primary' : 'border-border/50'}`}
-              onClick={() => setStrategy('balanced')}
-              data-testid="strategy-balanced"
-            >
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <div className={`p-1.5 rounded-md ${strategy === 'balanced' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                    <Scale className="h-4 w-4" />
-                  </div>
-                  Balanced Approach
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-2">
-                <CardDescription>Upgrade E1s for baseline security, downgrade non-core E5s.</CardDescription>
-              </CardContent>
-            </Card>
-
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${strategy === 'custom' ? 'ring-2 ring-primary border-primary' : 'border-border/50'}`}
-              onClick={() => setStrategy('custom')}
-              data-testid="strategy-custom"
-            >
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <div className={`p-1.5 rounded-md ${strategy === 'custom' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                    <Filter className="h-4 w-4" />
-                  </div>
-                  Custom
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-2">
-                <CardDescription>Pick your own upgrade/downgrade rules.</CardDescription>
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            {([
+              { key: "current" as Strategy, icon: CheckCircle2, title: "Current State", desc: "Keep existing license assignments unchanged." },
+              { key: "security" as Strategy, icon: Shield, title: "Maximize Security", desc: "Upgrade tiers for compliance, add Copilot for power users." },
+              { key: "cost" as Strategy, icon: TrendingDown, title: "Minimize Cost", desc: "Downgrade underutilized licenses, remove unused add-ons." },
+              { key: "balanced" as Strategy, icon: Scale, title: "Balanced", desc: "Upgrade underprovisioned, downgrade overprovisioned." },
+              { key: "custom" as Strategy, icon: Filter, title: "Custom", desc: "Configure your own analysis rules and thresholds." },
+            ]).map(({ key, icon: Icon, title, desc }) => {
+              const stats = data.length > 0 ? getStrategyStats(key) : null;
+              return (
+                <Card
+                  key={key}
+                  className={`cursor-pointer transition-all hover:border-primary/50 ${strategy === key ? 'ring-2 ring-primary border-primary' : 'border-border/50'}`}
+                  onClick={() => setStrategy(key)}
+                  data-testid={`strategy-${key}`}
+                >
+                  <CardHeader className="p-4 pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <div className={`p-1.5 rounded-md ${strategy === key ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      {title}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-1">
+                    <CardDescription className="text-xs">{desc}</CardDescription>
+                    {stats && key !== "current" && stats.affected > 0 && (
+                      <div className="mt-2 pt-2 border-t border-border/30 flex flex-col gap-1">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-muted-foreground">Users affected</span>
+                          <span className="font-medium">{stats.affected}</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-muted-foreground">Net cost</span>
+                          <span className={`font-medium ${stats.delta < 0 ? 'text-green-600' : stats.delta > 0 ? 'text-amber-600' : ''}`}>
+                            {stats.delta > 0 ? '+' : ''}{stats.delta < 0 ? '-' : ''}${Math.abs(stats.delta).toFixed(0)}/mo
+                          </span>
+                        </div>
+                        <div className="flex gap-3 text-xs text-muted-foreground">
+                          {stats.upgrades > 0 && <span className="text-amber-600">{stats.upgrades} upgrade{stats.upgrades !== 1 ? 's' : ''}</span>}
+                          {stats.downgrades > 0 && <span className="text-green-600">{stats.downgrades} saving{stats.downgrades !== 1 ? 's' : ''}</span>}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
 
           {strategy === 'custom' && (
             <Card className="border-border/60 bg-card shadow-sm">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Custom rules</CardTitle>
-                <CardDescription>Toggle what this recommendation engine is allowed to change.</CardDescription>
+                <CardTitle className="text-base">Custom Analysis Rules</CardTitle>
+                <CardDescription>Configure which optimizations the engine applies, based on actual usage data.</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {[
-                    { key: 'upgradeE1ToE3', label: 'Upgrade E1 → E3 (baseline security)', hint: 'Improves baseline security posture for low-tier users.' },
-                    { key: 'upgradeE3ToE5', label: 'Upgrade E3 → E5 (max security)', hint: 'Adds advanced security/compliance capabilities.' },
-                    { key: 'downgradeE5ToE3NonCore', label: 'Downgrade E5 → E3 for non-core depts', hint: 'Keeps E5 for IT/Engineering; reduces spend elsewhere.' },
-                    { key: 'removeVisio', label: 'Remove Visio Plan 2', hint: 'Eliminates a common high-cost add-on.' },
-                    { key: 'removeProject', label: 'Remove Project Plan 3', hint: 'Eliminates a common high-cost add-on.' },
-                    { key: 'addCopilotEngineering', label: 'Add GitHub Copilot for Engineering', hint: 'Productivity add-on for engineering teams.' },
-                  ].map((r) => (
-                    <button
-                      key={r.key}
-                      type="button"
-                      onClick={() =>
-                        setCustomRules((prev) => ({
-                          ...prev,
-                          [r.key]: !(prev as any)[r.key],
-                        }))
-                      }
-                      className={`text-left rounded-lg border p-3 transition-colors hover:bg-muted/30 ${
-                        (customRules as any)[r.key] ? 'border-primary/30 bg-primary/5' : 'border-border/60'
-                      }`}
-                      data-testid={`toggle-custom-${r.key}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="font-medium text-sm">{r.label}</div>
-                          <div className="text-xs text-muted-foreground mt-1">{r.hint}</div>
+              <CardContent className="space-y-4">
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Upgrades</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {[
+                      { key: 'upgradeUnderprovisioned', label: 'Upgrade underprovisioned users', hint: 'E1 users with >50% mailbox usage get E3; F1 users with >30% get Business Basic.' },
+                      { key: 'upgradeToE5Security', label: 'Upgrade security depts to E5', hint: 'IT, Engineering, Compliance, Security staff get E5 for advanced threat protection.' },
+                      { key: 'addCopilotPowerUsers', label: 'Add Copilot for power users', hint: 'GitHub Copilot for Engineering, M365 Copilot for IT/Design/Analytics power users.' },
+                    ].map((r) => (
+                      <button
+                        key={r.key}
+                        type="button"
+                        onClick={() => setCustomRules((prev) => ({ ...prev, [r.key]: !(prev as any)[r.key] }))}
+                        className={`text-left rounded-lg border p-3 transition-colors hover:bg-muted/30 ${(customRules as any)[r.key] ? 'border-primary/30 bg-primary/5' : 'border-border/60'}`}
+                        data-testid={`toggle-custom-${r.key}`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-medium text-sm">{r.label}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{r.hint}</div>
+                          </div>
+                          <div className={`mt-0.5 h-5 w-9 rounded-full border border-border/60 flex items-center px-0.5 shrink-0 ${(customRules as any)[r.key] ? 'bg-primary/20' : 'bg-muted'}`}>
+                            <div className={`h-4 w-4 rounded-full bg-background shadow-sm transition-transform ${(customRules as any)[r.key] ? 'translate-x-4' : 'translate-x-0'}`} />
+                          </div>
                         </div>
-                        <div className={`mt-0.5 h-5 w-9 rounded-full border border-border/60 flex items-center px-0.5 ${
-                          (customRules as any)[r.key] ? 'bg-primary/20' : 'bg-muted'
-                        }`}>
-                          <div className={`h-4 w-4 rounded-full bg-background shadow-sm transition-transform ${
-                            (customRules as any)[r.key] ? 'translate-x-4' : 'translate-x-0'
-                          }`} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Downgrades & Savings</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {[
+                      { key: 'downgradeUnderutilizedE5', label: 'Downgrade underutilized E5', hint: 'E5 users in non-security depts with low usage move to E3.' },
+                      { key: 'downgradeOverprovisionedE3', label: 'Downgrade overprovisioned E3', hint: 'E3 users with low usage in non-security depts move to Business Standard.' },
+                      { key: 'removeUnusedAddons', label: 'Remove unused add-ons', hint: 'Strip Visio, Project, Power BI Premium from non-relevant departments.' },
+                      { key: 'consolidateOverlap', label: 'Consolidate overlapping licenses', hint: 'Remove standalone Exchange, trials, and free licenses covered by suites.' },
+                    ].map((r) => (
+                      <button
+                        key={r.key}
+                        type="button"
+                        onClick={() => setCustomRules((prev) => ({ ...prev, [r.key]: !(prev as any)[r.key] }))}
+                        className={`text-left rounded-lg border p-3 transition-colors hover:bg-muted/30 ${(customRules as any)[r.key] ? 'border-primary/30 bg-primary/5' : 'border-border/60'}`}
+                        data-testid={`toggle-custom-${r.key}`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-medium text-sm">{r.label}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{r.hint}</div>
+                          </div>
+                          <div className={`mt-0.5 h-5 w-9 rounded-full border border-border/60 flex items-center px-0.5 shrink-0 ${(customRules as any)[r.key] ? 'bg-primary/20' : 'bg-muted'}`}>
+                            <div className={`h-4 w-4 rounded-full bg-background shadow-sm transition-transform ${(customRules as any)[r.key] ? 'translate-x-4' : 'translate-x-0'}`} />
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  ))}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Usage Threshold</div>
+                  <div className="flex items-center gap-4 p-3 border border-border/60 rounded-lg">
+                    <div className="flex-1">
+                      <div className="font-medium text-sm">Low-usage threshold: {customRules.usageThreshold}%</div>
+                      <div className="text-xs text-muted-foreground mt-1">Users below this mailbox usage % are flagged for potential downgrade.</div>
+                    </div>
+                    <input
+                      type="range"
+                      min={5}
+                      max={50}
+                      step={5}
+                      value={customRules.usageThreshold}
+                      onChange={(e) => setCustomRules(prev => ({ ...prev, usageThreshold: Number(e.target.value) }))}
+                      className="w-32 accent-primary"
+                      data-testid="slider-usage-threshold"
+                    />
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -963,7 +1040,7 @@ export default function Dashboard() {
                 ) : (
                   filteredData.map((user) => {
                     const originalUser = data.find(u => u.id === user.id)!;
-                    const isModified = strategy !== 'current' && JSON.stringify(originalUser.licenses) !== JSON.stringify(user.licenses);
+                    const isModified = strategy !== 'current' && JSON.stringify(sortLicenses(originalUser.licenses)) !== JSON.stringify(user.licenses);
                     
                     return (
                       <TableRow 
@@ -981,32 +1058,61 @@ export default function Dashboard() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-col gap-2">
+                          <div className="flex flex-col gap-1">
                             {isModified ? (
-                              <div className="flex flex-col gap-1.5">
-                                <div className="flex flex-wrap gap-1.5 opacity-50 line-through">
-                                  {originalUser.licenses.map((license, i) => (
-                                    <span key={i} className="text-xs">{license}</span>
-                                  ))}
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <ArrowRight className="h-3 w-3 text-primary" />
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {user.licenses.map((license, i) => (
-                                      <Badge key={i} className="text-xs bg-primary/20 text-primary border-primary/20 hover:bg-primary/30">
+                              <>
+                                <div className="flex flex-col gap-1">
+                                  {sortLicenses(originalUser.licenses).map((license, i) => (
+                                    <div key={`old-${i}`} className="flex items-center gap-1.5">
+                                      <Badge variant="outline" className="text-xs border-border/40 opacity-50 line-through w-fit">
                                         {license}
                                       </Badge>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="flex items-center gap-1 my-0.5">
+                                  <ArrowRight className="h-3 w-3 text-primary shrink-0" />
+                                  <div className="h-px flex-1 bg-primary/20" />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  {user.licenses.map((license, i) => {
+                                    const isSuite = SUITE_LICENSES.has(license);
+                                    const isNew = !originalUser.licenses.includes(license);
+                                    return (
+                                      <Badge
+                                        key={`new-${i}`}
+                                        className={`text-xs w-fit ${isNew ? 'bg-primary/20 text-primary border-primary/20' : isSuite ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' : 'bg-secondary/50 border-border/40'}`}
+                                      >
+                                        {license}
+                                      </Badge>
+                                    );
+                                  })}
+                                </div>
+                                {user.reasons && user.reasons.length > 0 && (
+                                  <div className="mt-1 space-y-0.5">
+                                    {user.reasons.map((reason, i) => (
+                                      <div key={i} className="text-[11px] text-muted-foreground leading-tight flex items-start gap-1">
+                                        <Info className="h-3 w-3 shrink-0 mt-0.5 text-primary/60" />
+                                        <span>{reason}</span>
+                                      </div>
                                     ))}
                                   </div>
-                                </div>
-                              </div>
+                                )}
+                              </>
                             ) : (
-                              <div className="flex flex-wrap gap-1.5">
-                                {user.licenses.map((license, i) => (
-                                  <Badge key={i} variant="outline" className="text-xs border-border/60">
-                                    {license}
-                                  </Badge>
-                                ))}
+                              <div className="flex flex-col gap-1">
+                                {user.licenses.map((license, i) => {
+                                  const isSuite = SUITE_LICENSES.has(license);
+                                  return (
+                                    <Badge
+                                      key={i}
+                                      variant="outline"
+                                      className={`text-xs w-fit ${isSuite ? 'border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-300' : 'border-border/60'}`}
+                                    >
+                                      {license}
+                                    </Badge>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
