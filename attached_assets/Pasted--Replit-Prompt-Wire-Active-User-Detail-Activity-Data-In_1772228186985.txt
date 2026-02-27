@@ -1,0 +1,224 @@
+# Replit Prompt — Wire Active User Detail Activity Data Into Strategy Engine
+
+## IMPORTANT: This modifies 4 existing files. Do NOT create new files. Read each file fully before editing.
+
+---
+
+## Problem
+
+The `fetchActiveUserDetailReport()` function in `server/microsoft-graph.ts` already fetches per-user activity data from Microsoft Graph API (Teams, SharePoint, OneDrive, Exchange last activity dates), but this data is NEVER used. The strategy engine in `client/src/pages/dashboard.tsx` makes all licensing recommendations based solely on mailbox GB usage — it cannot distinguish between an E5 user actively using 5 services and an E5 user who only checks email. The AI executive summary prompt in `server/routes.ts` also only receives mailbox data, so it can't make activity-informed recommendations.
+
+## Goal
+
+Wire the Active User Detail report data (per-user service activity: Exchange, Teams, SharePoint, OneDrive, Yammer, Skype — active/inactive booleans + last activity dates) into:
+1. The Graph API sync response (so OAuth users get it automatically)
+2. A new CSV/XLSX upload endpoint (so manual upload users can provide it)
+3. The frontend strategy engine (so recommendations use activity signals)
+4. The AI prompt (so the executive briefing references real service utilization)
+5. The Excel export (so exported data includes activity columns)
+
+---
+
+## Changes Required
+
+### FILE 1: `server/microsoft-graph.ts`
+
+**Add a `UserActivity` interface** (export it):
+```typescript
+export interface UserActivity {
+  exchangeActive: boolean;
+  oneDriveActive: boolean;
+  sharePointActive: boolean;
+  teamsActive: boolean;
+  yammerActive: boolean;
+  skypeActive: boolean;
+  exchangeLastDate: string | null;
+  oneDriveLastDate: string | null;
+  sharePointLastDate: string | null;
+  teamsLastDate: string | null;
+  yammerLastDate: string | null;
+  skypeLastDate: string | null;
+  activeServiceCount: number;
+  totalServiceCount: number;
+  daysSinceLastActivity: number | null;
+}
+```
+
+**Add a new `fetchUserActivityMap()` function** (export it) that:
+- Calls the same Graph API endpoint as `fetchActiveUserDetailReport`: `GET /beta/reports/getOffice365ActiveUserDetail(period='D30')?$format=text/csv`
+- Parses the CSV response to extract per-user: UPN, Exchange/OneDrive/SharePoint/Teams/Yammer/Skype last activity dates, and "Has X License" booleans
+- For each user, computes: which services are active (have a last activity date), `activeServiceCount`, `totalServiceCount` (licensed services), `daysSinceLastActivity` (days since most recent activity across all services, null if no activity)
+- Returns `Map<string, UserActivity>` keyed by lowercase UPN
+- On error, returns empty Map (graceful degradation)
+
+**Keep `fetchActiveUserDetailReport()` as-is** (it's used by its own endpoint).
+
+**Update `fetchM365Data()`** to:
+- Call `fetchUserActivityMap()` in parallel with `fetchLicensedUsers()` and `fetchMailboxUsage()` using `Promise.all`
+- Merge `activity` field onto each user object (matched by lowercase UPN), defaulting to `null` if no activity data found
+
+---
+
+### FILE 2: `server/routes.ts`
+
+**Import** `fetchUserActivityMap` and `type UserActivity` from `./microsoft-graph`.
+
+**Update the user upload endpoint** (`POST /api/upload/users`): Add `activity: null` to each user object in the `users.push()` call, so uploaded users have a consistent shape.
+
+**Add a new upload endpoint** `POST /api/upload/activity` that:
+- Accepts CSV/XLSX file upload (same multer config as other uploads)
+- Uses `parseFileToRows()` to parse the file
+- Finds columns: "User Principal Name", "Exchange Last Activity Date", "OneDrive Last Activity Date", "SharePoint Last Activity Date", "Teams Last Activity Date", "Yammer Last Activity Date", "Skype For Business Last Activity Date", "Has Exchange License", "Has OneDrive License", "Has SharePoint License", "Has Teams License", "Has Yammer License", "Has Skype For Business License"
+- Validates that at least one activity date column exists (return 400 error if not)
+- For each row, computes the same `UserActivity` structure as the server-side function
+- Returns `{ activityData: Record<string, UserActivity>, source: "uploaded", fileName, totalUsers }`
+
+**Update the AI prompt** (in the `POST /api/reports/:id/summary` handler):
+
+1. After the "MAILBOX & STORAGE ANALYTICS" section, add a new "SERVICE ACTIVITY ANALYSIS (30-day Active User Detail Report)" section that computes and displays:
+   - Total users with activity data
+   - Per-service adoption rates: Exchange active count/%, Teams active count/%, SharePoint active count/%, OneDrive active count/%
+   - Users with NO activity in 30 days (flag as "strong candidates for license downgrade or removal")
+   - Users using ≤1 service but licensed for ≥3 (flag as "over-provisioned, paying for unused capabilities")
+   - If no users have activity data, display "No activity data available — using mailbox usage only for recommendations."
+
+2. Update the per-user directory entries. Currently each user line shows: `• Name | UPN | Dept | Licenses | Mailbox | Cost | Status`. Change it to also include activity data when available:
+   - `Active Services: X/Y | Exchange✓ Teams✓ SharePoint✗ OneDrive✗ | Last Activity: Nd ago` (or "None in 30d" if null)
+   - If no activity data for that user: `Activity: No data`
+
+3. In the deliverable instructions, after section "2a. Licensing Landscape", add a new section:
+```
+### 2b. Service Utilization Analysis
+This section is new and essential. Analyze the per-user activity signals (Exchange, Teams, SharePoint, OneDrive active/inactive status and last activity dates). Identify:
+- Users paying for suite licenses but only using 1-2 services (over-provisioned)
+- Users with no activity in 30+ days (candidates for license removal or downgrade)
+- Users actively using collaboration tools on low-tier licenses (under-provisioned)
+- Departments with consistently low service adoption (training opportunity vs. license waste)
+Create a table showing: User | Current License | Active Services | Cost | Recommendation
+```
+
+4. Update the existing "2a. Licensing Landscape" instructions to add: "CRITICAL — USE ACTIVITY DATA: For each user where activity data is available, cross-reference their license tier against their actual service utilization."
+
+5. Renumber existing "2b. Storage & Mailbox Health" to "2c" and "2c. Cost Distribution by Department" to "2d".
+
+6. Update strategy deep-dive sections to reference activity data — especially "Minimize Cost" should say: "CRITICAL: Use activity data to justify each downgrade"
+
+---
+
+### FILE 3: `client/src/lib/api.ts`
+
+**Add a new `uploadActivityFile()` function**:
+```typescript
+export async function uploadActivityFile(file: File): Promise<{
+  activityData: Record<string, {
+    exchangeActive: boolean;
+    oneDriveActive: boolean;
+    sharePointActive: boolean;
+    teamsActive: boolean;
+    yammerActive: boolean;
+    skypeActive: boolean;
+    exchangeLastDate: string | null;
+    oneDriveLastDate: string | null;
+    sharePointLastDate: string | null;
+    teamsLastDate: string | null;
+    yammerLastDate: string | null;
+    skypeLastDate: string | null;
+    activeServiceCount: number;
+    totalServiceCount: number;
+    daysSinceLastActivity: number | null;
+  }>;
+  source: string;
+  fileName: string;
+  totalUsers: number;
+}> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch("/api/upload/activity", { method: "POST", body: formData });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to parse activity file");
+  }
+  return res.json();
+}
+```
+
+---
+
+### FILE 4: `client/src/pages/dashboard.tsx`
+
+**Import** `uploadActivityFile` from `@/lib/api`.
+
+**Update mock data**: Add an `activity` field to each of the 7 mock users with realistic activity profiles. Key examples:
+- Jessica Taylor (Finance, E5): `exchangeActive: true, teamsActive: true, sharePointActive: false, oneDriveActive: false, activeServiceCount: 2, totalServiceCount: 5` — she's an email-only E5 user, perfect downgrade candidate
+- Michael Chen (Sales, E3): `activeServiceCount: 2, totalServiceCount: 4, daysSinceLastActivity: 7` — low activity
+- Emily Davis (HR, E1): `exchangeActive: true, everything else false, activeServiceCount: 1, totalServiceCount: 3` — email-only
+- Alex Johnson, James Wilson, David Anderson: high activity (4+ services active, daysSinceLastActivity: 0)
+
+**Add state and refs**: `uploadedActivityFile` state (string | null), `activityFileRef` (useRef for file input).
+
+**Add `handleActivityFileUpload` handler** that:
+- Calls `uploadActivityFile(file)`
+- Sets `uploadedActivityFile` state
+- Merges activity data into existing user data by matching lowercase UPN
+- Shows toast with match count
+
+**Update `handleClearUploads`** to also reset `uploadedActivityFile` to null.
+
+**REWRITE the `analyzeUser` function** to use activity signals. Add these derived signals at the top:
+```typescript
+const act = user.activity;
+const hasActivityData = act !== null && act !== undefined;
+const isFullyInactive = hasActivityData && (act.daysSinceLastActivity === null || act.daysSinceLastActivity > 30);
+const isLowActivity = hasActivityData && act.activeServiceCount <= 1 && act.totalServiceCount >= 3;
+const isEmailOnly = hasActivityData && act.exchangeActive && !act.teamsActive && !act.sharePointActive && !act.oneDriveActive;
+const usesAdvancedCollaboration = hasActivityData && act.teamsActive && (act.sharePointActive || act.oneDriveActive);
+const usesFullSuite = hasActivityData && act.activeServiceCount >= 3;
+```
+
+Then update each rule block to PREFER activity-based decisions over mailbox-only, with mailbox as fallback:
+
+**Upgrade logic changes:**
+- `upgradeUnderprovisioned` for E1: If `hasActivityData && usesAdvancedCollaboration` → upgrade to E3 (reason: "E1 user actively using N services — needs E3 for security baseline + desktop apps"). ELSE fall back to mailbox >50% check. Security strategy still upgrades all E1.
+- `upgradeUnderprovisioned` for F1: If `hasActivityData && exchangeActive && activeServiceCount >= 2` → upgrade to Business Basic. ELSE fall back to mailbox >30%.
+- `upgradeBasicToStandard`: If `hasActivityData && usesFullSuite` → upgrade. ELSE fall back to mailbox >50%.
+- `addCopilotPowerUsers`: Use `usesFullSuite` activity signal instead of mailbox >50% when activity data available.
+
+**Downgrade logic changes:**
+- `downgradeUnderutilizedE5`: Check activity signals IN ORDER: `isFullyInactive` → `isEmailOnly` → `isLowActivity` → fall back to mailbox threshold. Each gets a distinct, informative reason message referencing service counts.
+- `downgradeOverprovisionedE3`: Check `isFullyInactive` first, then `isEmailOnly && low mailbox`, then fall back to mailbox threshold.
+- `downgradeUnderutilizedBizPremium`: Check `isFullyInactive || isLowActivity` first, then mailbox threshold.
+- `downgradeBizStandardToBasic`: Check `isFullyInactive || isEmailOnly` first, then mailbox threshold.
+- ALL downgrade checks should already have `!isSecurityDept` guard — move it to the outer if-block level so it doesn't need to be repeated.
+
+**Add-on cleanup** (`removeUnusedAddons`): For Project Plan 3, use activity signals (`isLowActivity || isFullyInactive`) instead of just mailbox threshold when activity data is available.
+
+**Keep all existing logic as fallback** — when `hasActivityData` is false, every rule should behave exactly as it does today (mailbox-only). This ensures backward compatibility.
+
+**Update Excel export** (`handleExportXlsx`): Add columns:
+- "Active Services (30d)": `${activeServiceCount}/${totalServiceCount}` or "N/A"
+- "Exchange Active": Yes/No/N/A
+- "Teams Active": Yes/No/N/A  
+- "SharePoint Active": Yes/No/N/A
+- "OneDrive Active": Yes/No/N/A
+- "Days Since Last Activity": number or "N/A"
+- "Recommendation": join the user's `reasons` array with "; "
+
+**Add activity file upload UI** in the upload panel (after the Mailbox Usage upload section):
+- Dashed border container matching existing upload sections
+- Title: "Service Activity Report" with a `<Badge variant="secondary">Recommended</Badge>`
+- Instructions: "M365 Admin Center → Reports → Usage → Active Users → Active User Detail (30 days) → Export"
+- Hidden file input + Button matching existing pattern
+- When `dataSource === "mock"`: show "Upload Active Users first"
+- When no activity file uploaded and `dataSource !== "microsoft"`: show amber warning "Without this, recommendations use mailbox data only. Activity data enables per-service utilization analysis."
+
+---
+
+## Testing
+
+After implementing, verify with the mock data:
+1. Load the dashboard — mock users should show activity data
+2. Select "Minimize Cost" strategy — Jessica Taylor (E5, 2/5 services) should get downgraded to E3 with a reason mentioning she only uses Exchange and Teams
+3. Select "Balanced" strategy — Emily Davis (E1, email-only) should NOT get upgraded (balanced doesn't upgrade email-only users without high mailbox)
+4. Select "Maximize Security" — all E1 users should still get upgraded to E3 regardless of activity
+5. Export to Excel — new activity columns should appear
+6. Generate executive briefing — the AI prompt should include per-user activity data in the user directory section
