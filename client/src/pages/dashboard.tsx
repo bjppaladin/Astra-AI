@@ -81,7 +81,7 @@ export default function Dashboard() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterModified, setFilterModified] = useState<string>("all");
   const [strategy, setStrategy] = useState<Strategy>("current");
-  const [commitment, setCommitment] = useState<"monthly" | "annual">("monthly");
+  const [commitment, setCommitment] = useState<"monthly" | "annual">("annual");
   const userFileRef = useRef<HTMLInputElement>(null);
   const mailboxFileRef = useRef<HTMLInputElement>(null);
 
