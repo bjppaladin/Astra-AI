@@ -138,29 +138,8 @@ export async function getCurrentUser(accessToken: string): Promise<{ displayName
   return { displayName: data.displayName, mail: data.mail || data.userPrincipalName };
 }
 
-const SKU_MAP: Record<string, { name: string; cost: number }> = {
-  "SPE_E5": { name: "Microsoft 365 E5", cost: 57.00 },
-  "SPE_E3": { name: "Microsoft 365 E3", cost: 36.00 },
-  "STANDARDPACK": { name: "Office 365 E1", cost: 10.00 },
-  "SPE_F1": { name: "Microsoft 365 F1", cost: 2.25 },
-  "ENTERPRISEPREMIUM": { name: "Office 365 E5", cost: 38.00 },
-  "ENTERPRISEPACK": { name: "Office 365 E3", cost: 23.00 },
-  "VISIOCLIENT": { name: "Visio Plan 2", cost: 15.00 },
-  "PROJECTPREMIUM": { name: "Project Plan 5", cost: 55.00 },
-  "PROJECTPROFESSIONAL": { name: "Project Plan 3", cost: 30.00 },
-  "POWER_BI_PRO": { name: "Power BI Pro", cost: 10.00 },
-  "POWER_BI_PREMIUM_PER_USER": { name: "Power BI Premium Per User", cost: 20.00 },
-  "Microsoft_365_Copilot": { name: "Microsoft 365 Copilot", cost: 30.00 },
-  "EXCHANGESTANDARD": { name: "Exchange Online Plan 1", cost: 4.00 },
-  "EXCHANGEENTERPRISE": { name: "Exchange Online Plan 2", cost: 8.00 },
-  "O365_BUSINESS_ESSENTIALS": { name: "Microsoft 365 Business Basic", cost: 6.00 },
-  "O365_BUSINESS_PREMIUM": { name: "Microsoft 365 Business Standard", cost: 12.50 },
-  "SPB": { name: "Microsoft 365 Business Premium", cost: 22.00 },
-  "TEAMS_EXPLORATORY": { name: "Teams Exploratory", cost: 0 },
-  "FLOW_FREE": { name: "Power Automate Free", cost: 0 },
-  "POWERAPPS_VIRAL": { name: "Power Apps Trial", cost: 0 },
-  "STREAM": { name: "Microsoft Stream", cost: 0 },
-};
+import { SKU_COST_MAP, findLicenseInfo } from "./sku-map";
+const SKU_MAP = SKU_COST_MAP;
 
 export async function fetchLicensedUsers(accessToken: string): Promise<any[]> {
   const skuData = await graphFetch(accessToken, `${GRAPH_BASE}/subscribedSkus?$select=skuId,skuPartNumber,prepaidUnits,consumedUnits`);
@@ -168,8 +147,7 @@ export async function fetchLicensedUsers(accessToken: string): Promise<any[]> {
 
   const skuIdToInfo: Record<string, { name: string; cost: number }> = {};
   for (const sku of skus) {
-    const mapped = SKU_MAP[sku.skuPartNumber];
-    skuIdToInfo[sku.skuId] = mapped || { name: sku.skuPartNumber, cost: 0 };
+    skuIdToInfo[sku.skuId] = findLicenseInfo(sku.skuPartNumber);
   }
 
   let allUsers: any[] = [];
@@ -280,14 +258,14 @@ export async function fetchSubscribedSkus(accessToken: string): Promise<any[]> {
   const data = await graphFetch(accessToken, `${GRAPH_BASE}/subscribedSkus?$select=skuId,skuPartNumber,prepaidUnits,consumedUnits,capabilityStatus,appliesTo`);
   const skus = data.value || [];
   return skus.map((sku: any) => {
-    const mapped = SKU_MAP[sku.skuPartNumber];
+    const mapped = findLicenseInfo(sku.skuPartNumber);
     const enabled = sku.prepaidUnits?.enabled ?? 0;
     const consumed = sku.consumedUnits ?? 0;
     return {
       skuId: sku.skuId,
       skuPartNumber: sku.skuPartNumber,
-      displayName: mapped?.name || sku.skuPartNumber,
-      costPerUser: mapped?.cost ?? 0,
+      displayName: mapped.name,
+      costPerUser: mapped.cost,
       enabled,
       consumed,
       available: enabled - consumed,
