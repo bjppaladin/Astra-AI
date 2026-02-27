@@ -1,13 +1,15 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useLocation } from "wouter";
-import { ArrowLeft, FileText, Loader2, Printer, Download, RefreshCw } from "lucide-react";
+import { ArrowLeft, FileText, Loader2, Printer, Download, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { generateSummaryStream, fetchSummary } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
 export default function ExecutiveSummaryPage() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
+  const { toast } = useToast();
   const reportId = Number(params.id);
 
   const [content, setContent] = useState("");
@@ -15,7 +17,9 @@ export default function ExecutiveSummaryPage() {
   const [isDone, setIsDone] = useState(false);
   const [wordCount, setWordCount] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [isExporting, setIsExporting] = useState<"pdf" | "png" | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -216,6 +220,97 @@ export default function ExecutiveSummaryPage() {
     return `<div class="text-sm leading-relaxed text-foreground/85">${blocks.join("\n")}</div>`;
   };
 
+  const captureContent = useCallback(async () => {
+    const el = exportRef.current;
+    if (!el) throw new Error("Content not available for export");
+    const html2canvas = (await import("html2canvas")).default;
+    const canvas = await html2canvas(el, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+      width: el.scrollWidth,
+      height: el.scrollHeight,
+      windowWidth: el.scrollWidth,
+      windowHeight: el.scrollHeight,
+    });
+    return canvas;
+  }, []);
+
+  const handleExportPDF = useCallback(async () => {
+    if (!exportRef.current) return;
+    setIsExporting("pdf");
+    try {
+      const fullCanvas = await captureContent();
+      const { jsPDF } = await import("jspdf");
+
+      const pdfPageWidth = 210;
+      const pdfPageHeight = 297;
+      const margin = 10;
+      const contentWidth = pdfPageWidth - margin * 2;
+      const contentHeight = pdfPageHeight - margin * 2;
+
+      const scaleFactor = contentWidth / fullCanvas.width;
+      const pageCanvasHeight = contentHeight / scaleFactor;
+      const totalPages = Math.ceil(fullCanvas.height / pageCanvasHeight);
+
+      const pdf = new jsPDF("p", "mm", "a4");
+
+      for (let page = 0; page < totalPages; page++) {
+        if (page > 0) pdf.addPage();
+
+        const sourceY = page * pageCanvasHeight;
+        const sourceH = Math.min(pageCanvasHeight, fullCanvas.height - sourceY);
+
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = fullCanvas.width;
+        pageCanvas.height = sourceH;
+        const ctx = pageCanvas.getContext("2d");
+        if (!ctx) continue;
+
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        ctx.drawImage(
+          fullCanvas,
+          0, sourceY, fullCanvas.width, sourceH,
+          0, 0, fullCanvas.width, sourceH
+        );
+
+        const pageImgData = pageCanvas.toDataURL("image/jpeg", 0.92);
+        const imgH = sourceH * scaleFactor;
+        pdf.addImage(pageImgData, "JPEG", margin, margin, contentWidth, imgH);
+      }
+
+      const dateStr = new Date().toISOString().split("T")[0];
+      pdf.save(`M365-Executive-Briefing-${dateStr}.pdf`);
+      toast({ title: "PDF exported", description: `Saved as ${totalPages}-page PDF.` });
+    } catch (err: any) {
+      console.error("PDF export error:", err);
+      toast({ title: "Export failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsExporting(null);
+    }
+  }, [captureContent, toast]);
+
+  const handleExportPNG = useCallback(async () => {
+    if (!exportRef.current) return;
+    setIsExporting("png");
+    try {
+      const canvas = await captureContent();
+      const link = document.createElement("a");
+      const dateStr = new Date().toISOString().split("T")[0];
+      link.download = `M365-Executive-Briefing-${dateStr}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast({ title: "Image exported", description: "Your executive briefing has been saved as a PNG image." });
+    } catch (err: any) {
+      console.error("PNG export error:", err);
+      toast({ title: "Export failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsExporting(null);
+    }
+  }, [captureContent, toast]);
+
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -248,9 +343,17 @@ export default function ExecutiveSummaryPage() {
               <span className="text-xs text-muted-foreground mr-2 tabular-nums" data-testid="text-word-count">
                 {wordCount.toLocaleString()} words
               </span>
+              <Button variant="outline" size="sm" onClick={handleExportPDF} disabled={isExporting !== null} data-testid="button-export-pdf" className="gap-2">
+                {isExporting === "pdf" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                PDF
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleExportPNG} disabled={isExporting !== null} data-testid="button-export-png" className="gap-2">
+                {isExporting === "png" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4" />}
+                PNG
+              </Button>
               <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="button-print" className="gap-2">
                 <Printer className="h-4 w-4" />
-                Print / PDF
+                Print
               </Button>
             </>
           )}
@@ -258,7 +361,7 @@ export default function ExecutiveSummaryPage() {
       </header>
 
       <main className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full">
-        <Card className="shadow-xl border-border/30 bg-card/95 backdrop-blur-sm">
+        <Card className="shadow-xl border-border/30 bg-card/95 backdrop-blur-sm" ref={exportRef}>
           <CardHeader className="border-b border-border/30 bg-gradient-to-r from-primary/5 to-transparent px-8 py-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">

@@ -26,6 +26,7 @@ A full-stack web application for Microsoft 365 license and mailbox usage analysi
 9. **Billing Commitment** — Monthly vs Annual cost comparison (0.85 multiplier for annual).
 10. **XLSX Export** — Download combined report as Excel.
 11. **Executive Briefing** — Comprehensive AI-generated vCIO analysis (8 sections: executive summary, current state assessment, strategy deep-dives, risk matrix with severity ratings, implementation roadmap, financial summary, next steps). Pre-computes dept breakdowns, license distribution, mailbox analytics, and risk signals before sending to AI. Uses system + user message prompting with temperature 0.4. Polished line-by-line markdown renderer with styled tables (auto-detected headers, color-coded deltas), blockquotes, HR rules, emoji support. Real-time word count + elapsed time during SSE streaming. Print-optimized CSS.
+12. **Export to PDF/PNG** — Export executive briefing as a multi-page PDF (A4) or full-resolution PNG image. Uses html2canvas for rendering + jsPDF for PDF pagination. Lazy-loaded via dynamic imports.
 
 ## Data Model (shared/schema.ts)
 - `users` — Auth table (placeholder)
