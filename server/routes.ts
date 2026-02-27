@@ -215,6 +215,16 @@ export async function registerRoutes(
       });
       req.session.microsoftSessionId = sessionId;
 
+      try {
+        await storage.recordLogin({
+          userEmail: user.mail || "",
+          userName: user.displayName || null,
+          tenantId: tokens.tenantId || null,
+        });
+      } catch (loginErr) {
+        console.error("Failed to record login:", loginErr);
+      }
+
       res.redirect("/?auth_success=true");
     } catch (err: any) {
       console.error("OAuth callback error:", err.message);
@@ -741,6 +751,108 @@ FORMATTING RULES
       } else {
         res.status(500).json({ error: err.message });
       }
+    }
+  });
+
+  app.get("/api/user/greeting", async (req, res) => {
+    const sessionId = req.session?.microsoftSessionId;
+    if (!sessionId) return res.json({ greeting: null });
+
+    const stored = tokenStore.get(sessionId);
+    if (!stored || !stored.userEmail) return res.json({ greeting: null });
+
+    try {
+      const loginCount = await storage.getLoginCount(stored.userEmail);
+      const history = await storage.getLoginHistory(stored.userEmail);
+      const firstName = (stored.userName || "").split(" ")[0] || "there";
+      const now = new Date();
+
+      let message: string;
+      let subtitle: string;
+
+      if (loginCount <= 1) {
+        message = `Welcome to Astra, ${firstName}!`;
+        subtitle = "Connect your data to start optimizing your Microsoft 365 licenses.";
+      } else if (loginCount <= 5) {
+        message = `Welcome back, ${firstName}`;
+        const lastLogin = history.length > 1 ? history[1].loginAt : null;
+        if (lastLogin) {
+          const daysDiff = Math.floor((now.getTime() - new Date(lastLogin).getTime()) / (1000 * 60 * 60 * 24));
+          subtitle = daysDiff === 0 ? "Good to see you again today." : `Your last session was ${daysDiff} day${daysDiff !== 1 ? 's' : ''} ago.`;
+        } else {
+          subtitle = "Ready to analyze your license data.";
+        }
+      } else {
+        message = `Good to see you again, ${firstName}`;
+        const lastLogin = history.length > 1 ? history[1].loginAt : null;
+        if (lastLogin) {
+          const daysDiff = Math.floor((now.getTime() - new Date(lastLogin).getTime()) / (1000 * 60 * 60 * 24));
+          subtitle = daysDiff === 0 ? `Session #${loginCount} today — you're on a roll.` : `${loginCount} sessions so far. Last visit was ${daysDiff} day${daysDiff !== 1 ? 's' : ''} ago.`;
+        } else {
+          subtitle = `${loginCount} sessions and counting.`;
+        }
+      }
+
+      res.json({ greeting: { message, subtitle, loginCount, firstName } });
+    } catch (err) {
+      console.error("Greeting error:", err);
+      res.json({ greeting: null });
+    }
+  });
+
+  const newsCache: { data: any[]; fetchedAt: number } = { data: [], fetchedAt: 0 };
+  const NEWS_CACHE_TTL = 5 * 60 * 1000;
+
+  app.get("/api/insights/news", async (_req, res) => {
+    const now = Date.now();
+    if (newsCache.data.length > 0 && now - newsCache.fetchedAt < NEWS_CACHE_TTL) {
+      return res.json({ items: newsCache.data, cachedAt: new Date(newsCache.fetchedAt).toISOString() });
+    }
+
+    try {
+      const feedUrl = "https://www.microsoft.com/en-us/microsoft-365/blog/feed/";
+      const response = await fetch(feedUrl, {
+        headers: { "User-Agent": "Astra/1.0 (M365 License Insights)" },
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (!response.ok) throw new Error(`Feed returned ${response.status}`);
+
+      const xml = await response.text();
+      const items: { title: string; link: string; date: string; summary: string }[] = [];
+      const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+      let match;
+
+      while ((match = itemRegex.exec(xml)) !== null && items.length < 5) {
+        const itemXml = match[1];
+        const title = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1]
+          || itemXml.match(/<title>(.*?)<\/title>/)?.[1] || "";
+        const link = itemXml.match(/<link>(.*?)<\/link>/)?.[1] || "";
+        const pubDate = itemXml.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || "";
+        const descRaw = itemXml.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1]
+          || itemXml.match(/<description>(.*?)<\/description>/)?.[1] || "";
+        const summary = descRaw.replace(/<[^>]+>/g, "").slice(0, 200).trim();
+
+        if (title) {
+          items.push({
+            title,
+            link,
+            date: pubDate ? new Date(pubDate).toISOString() : "",
+            summary: summary + (summary.length >= 200 ? "..." : ""),
+          });
+        }
+      }
+
+      newsCache.data = items;
+      newsCache.fetchedAt = now;
+
+      res.json({ items, cachedAt: new Date(now).toISOString() });
+    } catch (err: any) {
+      console.error("News feed error:", err.message);
+      if (newsCache.data.length > 0) {
+        return res.json({ items: newsCache.data, cachedAt: new Date(newsCache.fetchedAt).toISOString(), stale: true });
+      }
+      res.json({ items: [], error: "Unable to fetch news feed" });
     }
   });
 

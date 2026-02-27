@@ -1,6 +1,6 @@
 import { db } from "./db";
-import { reports, executiveSummaries, users } from "@shared/schema";
-import type { User, InsertUser, Report, InsertReport, ExecutiveSummary, InsertExecutiveSummary } from "@shared/schema";
+import { reports, executiveSummaries, users, loginHistory } from "@shared/schema";
+import type { User, InsertUser, Report, InsertReport, ExecutiveSummary, InsertExecutiveSummary, InsertLoginHistory, LoginHistory } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
@@ -15,6 +15,10 @@ export interface IStorage {
 
   getExecutiveSummary(reportId: number): Promise<ExecutiveSummary | undefined>;
   createExecutiveSummary(summary: InsertExecutiveSummary): Promise<ExecutiveSummary>;
+
+  recordLogin(entry: InsertLoginHistory): Promise<LoginHistory>;
+  getLoginHistory(userEmail: string): Promise<LoginHistory[]>;
+  getLoginCount(userEmail: string): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -60,6 +64,20 @@ export class DatabaseStorage implements IStorage {
   async createExecutiveSummary(summary: InsertExecutiveSummary): Promise<ExecutiveSummary> {
     const [created] = await db.insert(executiveSummaries).values(summary).returning();
     return created;
+  }
+
+  async recordLogin(entry: InsertLoginHistory): Promise<LoginHistory> {
+    const [created] = await db.insert(loginHistory).values(entry).returning();
+    return created;
+  }
+
+  async getLoginHistory(userEmail: string): Promise<LoginHistory[]> {
+    return db.select().from(loginHistory).where(eq(loginHistory.userEmail, userEmail)).orderBy(desc(loginHistory.loginAt));
+  }
+
+  async getLoginCount(userEmail: string): Promise<number> {
+    const rows = await db.select().from(loginHistory).where(eq(loginHistory.userEmail, userEmail));
+    return rows.length;
   }
 }
 

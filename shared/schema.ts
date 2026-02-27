@@ -76,4 +76,20 @@ export const insertMicrosoftTokenSchema = createInsertSchema(microsoftTokens).om
 export type MicrosoftToken = typeof microsoftTokens.$inferSelect;
 export type InsertMicrosoftToken = z.infer<typeof insertMicrosoftTokenSchema>;
 
+export const loginHistory = pgTable("login_history", {
+  id: serial("id").primaryKey(),
+  userEmail: text("user_email").notNull(),
+  userName: text("user_name"),
+  tenantId: text("tenant_id"),
+  loginAt: timestamp("login_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertLoginHistorySchema = createInsertSchema(loginHistory).omit({
+  id: true,
+  loginAt: true,
+});
+
+export type LoginHistory = typeof loginHistory.$inferSelect;
+export type InsertLoginHistory = z.infer<typeof insertLoginHistorySchema>;
+
 export { pgTable };

@@ -28,8 +28,13 @@ Astra is a full-stack web application for Microsoft 365 license and mailbox usag
 10. **XLSX Export** — Download combined report as Excel.
 11. **Tenant Subscriptions** — Collapsible panel showing live M365 subscription data via Graph API (`subscribedSkus`). Displays subscription name, status, purchased/assigned/available counts, utilization bar, cost per user, and total monthly spend with a totals row. Auto-loads when connected, manual refresh button.
 12. **License Comparison Guide** — Dedicated `/licenses` page with side-by-side feature comparison for up to 3 M365 licenses. Comprehensive feature dataset (19 licenses) covering 8 categories: Core Apps, Email & Calendar, Communication & Collaboration, Storage, Security & Identity, Compliance & Data Governance, Automation & Development, AI & Advanced. License badges in the dashboard are clickable and navigate to the comparison page with that license pre-selected via URL query params. Supports suite licenses (E1, E3, E5, F1, Business Basic/Standard/Premium), standalone (Exchange Online Plan 1/2), and add-ons (Copilot, Visio, Project, Power BI, GitHub Copilot).
-13. **Executive Briefing** — Comprehensive AI-generated vCIO analysis (8 sections: executive summary, current state assessment, strategy deep-dives, risk matrix with severity ratings, implementation roadmap, financial summary, next steps). Pre-computes dept breakdowns, license distribution, mailbox analytics, and risk signals before sending to AI. Uses system + user message prompting with temperature 0.4. Polished line-by-line markdown renderer with styled tables (auto-detected headers, color-coded deltas), blockquotes, HR rules, emoji support. Real-time word count + elapsed time during SSE streaming. Print-optimized CSS.
-14. **Export to PDF/PNG** — Export executive briefing as a multi-page PDF (A4) or full-resolution PNG image. Uses html2canvas for rendering + jsPDF for PDF pagination. Lazy-loaded via dynamic imports.
+13. **Dashboard PDF/PNG Export** — Export the full dashboard (KPIs, strategy summary, data table) as multi-page PDF or full-resolution PNG. Export dropdown in the header alongside XLSX export.
+14. **Animated Transitions** — Staggered card entrance animations, animated number counters (KPI values count up from 0), strategy-switch fade transitions, table row stagger animations, badge hover effects. All CSS-based with minimal JS for counters.
+15. **Personalized Greetings** — Login history tracked in database. Greeting displayed in dashboard header: "Welcome to Astra" (first visit), "Welcome back" (2-5 visits), "Good to see you again" (6+). Shows days since last session.
+16. **Interactive Tutorial** — 6-step guided walkthrough overlay for new users. Triggers automatically on first visit (tracked via localStorage). Semi-transparent backdrop with highlighted target elements. Accessible via "?" help button in header.
+17. **Industry Insights Feed** — Collapsible panel with latest Microsoft 365 blog articles via RSS. Server-side fetching with 5-minute cache TTL. Shows title, date, summary with links to source articles.
+18. **Executive Briefing** — Comprehensive AI-generated vCIO analysis (8 sections: executive summary, current state assessment, strategy deep-dives, risk matrix with severity ratings, implementation roadmap, financial summary, next steps). Pre-computes dept breakdowns, license distribution, mailbox analytics, and risk signals before sending to AI. Uses system + user message prompting with temperature 0.4. Polished line-by-line markdown renderer with styled tables (auto-detected headers, color-coded deltas), blockquotes, HR rules, emoji support. Real-time word count + elapsed time during SSE streaming. Print-optimized CSS.
+19. **Export to PDF/PNG** — Export executive briefing as a multi-page PDF (A4) or full-resolution PNG image. Uses html2canvas for rendering + jsPDF for PDF pagination. Lazy-loaded via dynamic imports.
 
 ## Navigation
 - All pages share a consistent header with the Astra logo ("A" icon), app name, and nav links: Dashboard, License Guide.
@@ -41,6 +46,7 @@ Astra is a full-stack web application for Microsoft 365 license and mailbox usag
 - `reports` — Saved report snapshots (strategy, commitment, user data as JSONB)
 - `executiveSummaries` — AI-generated summaries linked to reports
 - `microsoftTokens` — Microsoft OAuth tokens (session-scoped)
+- `loginHistory` — Login session tracking (userEmail, userName, tenantId, loginAt) for personalized greetings
 - `user_sessions` — Session store (auto-created by connect-pg-simple)
 
 ## File Structure
@@ -81,6 +87,8 @@ shared/
 - `DELETE /api/reports/:id` — Delete a report
 - `GET /api/reports/:id/summary` — Get saved executive summary
 - `POST /api/reports/:id/summary` — Generate AI executive summary (SSE streaming)
+- `GET /api/user/greeting` — Personalized greeting based on login history
+- `GET /api/insights/news` — M365 licensing news feed (RSS, 5-min cache)
 
 ## Environment Variables
 - `DATABASE_URL` — PostgreSQL connection string

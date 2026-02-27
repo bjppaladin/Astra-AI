@@ -135,6 +135,30 @@ export async function fetchSummary(reportId: number) {
   return res.json();
 }
 
+export async function fetchGreeting(): Promise<{
+  greeting: {
+    message: string;
+    subtitle: string;
+    loginCount: number;
+    firstName: string;
+  } | null;
+}> {
+  const res = await fetch("/api/user/greeting");
+  if (!res.ok) return { greeting: null };
+  return res.json();
+}
+
+export async function fetchNews(): Promise<{
+  items: { title: string; link: string; date: string; summary: string }[];
+  cachedAt?: string;
+  stale?: boolean;
+  error?: string;
+}> {
+  const res = await fetch("/api/insights/news");
+  if (!res.ok) return { items: [] };
+  return res.json();
+}
+
 export async function generateSummaryStream(
   reportId: number,
   payload: {

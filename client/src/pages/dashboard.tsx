@@ -25,6 +25,12 @@ import {
   ChevronDown,
   ChevronUp,
   Package,
+  Image,
+  FileDown,
+  HelpCircle,
+  Newspaper,
+  ExternalLink,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,6 +55,8 @@ import {
   disconnectMicrosoft,
   syncMicrosoftData,
   fetchSubscriptions,
+  fetchGreeting,
+  fetchNews,
 } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -131,6 +139,35 @@ function LicensePopoverContent({ licenseName }: { licenseName: string }) {
 
 type Strategy = "current" | "security" | "cost" | "balanced" | "custom";
 
+function useAnimatedNumber(value: number, duration = 600): string {
+  const [display, setDisplay] = useState(value);
+  const prevRef = useRef(value);
+  useEffect(() => {
+    const from = prevRef.current;
+    const to = value;
+    if (from === to) return;
+    prevRef.current = to;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplay(from + (to - from) * eased);
+      if (t < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, [value, duration]);
+  return display === 0 && value === 0 ? "0" : display.toFixed(value % 1 === 0 ? 0 : 2);
+}
+
+const TUTORIAL_STEPS = [
+  { target: "button-import", title: "Connect your data", body: "Start by signing in with Microsoft 365 for automatic data sync, or upload CSV/XLSX exports from the M365 Admin Center." },
+  { target: "text-total-users", title: "Explore your licenses", body: "The dashboard shows all your licensed users, their assigned licenses with feature popovers, and mailbox usage. Click any license badge for details." },
+  { target: "strategy-security", title: "Choose a strategy", body: "Pick from Security, Cost, Balanced, or Custom optimization. Each shows projected user impact and cost changes before you apply." },
+  { target: "strategy-custom", title: "Customize rules", body: "In Custom mode, configure each rule's department scope, override thresholds, and see live impact counts. The Recommendations panel suggests data-driven actions." },
+  { target: "button-generate-summary", title: "Generate insights", body: "Save your analysis and generate an AI-powered Executive Briefing — a board-ready report with per-user recommendations, cost projections, and strategic guidance." },
+  { target: "nav-licenses", title: "Compare licenses", body: "Use the License Guide to compare up to 3 M365 licenses side-by-side across 8 feature categories, from core apps to security and AI." },
+];
+
 export default function Dashboard() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
@@ -166,6 +203,22 @@ export default function Dashboard() {
   }[]>([]);
   const [showSubscriptions, setShowSubscriptions] = useState(false);
   const [subsLoading, setSubsLoading] = useState(false);
+
+  const [isExporting, setIsExporting] = useState<"pdf" | "png" | null>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const dashboardRef = useRef<HTMLDivElement>(null);
+
+  const [greeting, setGreeting] = useState<{ message: string; subtitle: string; loginCount: number; firstName: string } | null>(null);
+
+  const [tutorialStep, setTutorialStep] = useState(-1);
+  const [tutorialTooltipPos, setTutorialTooltipPos] = useState<{ top: number; left: number } | null>(null);
+
+  const [newsItems, setNewsItems] = useState<{ title: string; link: string; date: string; summary: string }[]>([]);
+  const [showNews, setShowNews] = useState(false);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [newsCachedAt, setNewsCachedAt] = useState<string | null>(null);
+
+  const [strategyKey, setStrategyKey] = useState(0);
 
   type RuleScope = "all" | "security" | "custom";
   type ScopedRule = { enabled: boolean; scope: RuleScope; departments: string[]; threshold?: number };
@@ -222,6 +275,214 @@ export default function Dashboard() {
       window.history.replaceState({}, "", "/");
     }
   }, []);
+
+  useEffect(() => {
+    if (msAuth.connected) {
+      fetchGreeting().then(r => { if (r.greeting) setGreeting(r.greeting); }).catch(() => {});
+    } else {
+      setGreeting(null);
+    }
+  }, [msAuth.connected]);
+
+  useEffect(() => {
+    const completed = localStorage.getItem("astra_tutorial_completed");
+    if (!completed && data.length === 0) {
+      setTutorialStep(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tutorialStep < 0 || tutorialStep >= TUTORIAL_STEPS.length) {
+      setTutorialTooltipPos(null);
+      return;
+    }
+    const step = TUTORIAL_STEPS[tutorialStep];
+    const el = document.querySelector(`[data-testid="${step.target}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => {
+        const rect = el.getBoundingClientRect();
+        el.classList.add("tutorial-highlight");
+        const top = rect.bottom + 12;
+        const left = Math.max(16, Math.min(rect.left, window.innerWidth - 360));
+        setTutorialTooltipPos({ top, left });
+      }, 300);
+    }
+    return () => {
+      const prevEl = document.querySelector(`[data-testid="${step.target}"]`);
+      if (prevEl) prevEl.classList.remove("tutorial-highlight");
+    };
+  }, [tutorialStep]);
+
+  const endTutorial = () => {
+    const step = TUTORIAL_STEPS[tutorialStep];
+    if (step) {
+      const el = document.querySelector(`[data-testid="${step.target}"]`);
+      if (el) el.classList.remove("tutorial-highlight");
+    }
+    setTutorialStep(-1);
+    setTutorialTooltipPos(null);
+    localStorage.setItem("astra_tutorial_completed", "true");
+  };
+
+  const nextTutorialStep = () => {
+    const step = TUTORIAL_STEPS[tutorialStep];
+    if (step) {
+      const el = document.querySelector(`[data-testid="${step.target}"]`);
+      if (el) el.classList.remove("tutorial-highlight");
+    }
+    if (tutorialStep >= TUTORIAL_STEPS.length - 1) {
+      endTutorial();
+    } else {
+      setTutorialStep(tutorialStep + 1);
+    }
+  };
+
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const close = () => setShowExportMenu(false);
+    const timer = setTimeout(() => document.addEventListener("click", close), 0);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [showExportMenu]);
+
+  const loadNews = useCallback(async () => {
+    setNewsLoading(true);
+    try {
+      const result = await fetchNews();
+      setNewsItems(result.items);
+      if (result.cachedAt) setNewsCachedAt(result.cachedAt);
+    } catch {
+    } finally {
+      setNewsLoading(false);
+    }
+  }, []);
+
+  const resolveColor = (val: string): string => {
+    const c = document.createElement("canvas");
+    c.width = 1; c.height = 1;
+    const ctx = c.getContext("2d");
+    if (!ctx) return val;
+    ctx.fillStyle = val;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    return a < 255 ? `rgba(${r},${g},${b},${(a / 255).toFixed(3)})` : `rgb(${r},${g},${b})`;
+  };
+
+  const captureContent = useCallback(async () => {
+    const el = dashboardRef.current;
+    if (!el) throw new Error("Content not available for export");
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.left = "-10000px";
+    iframe.style.top = "0";
+    iframe.style.width = el.scrollWidth + "px";
+    iframe.style.height = el.scrollHeight + "px";
+    iframe.style.border = "none";
+    document.body.appendChild(iframe);
+    try {
+      const iframeDoc = iframe.contentDocument!;
+      iframeDoc.open();
+      iframeDoc.write("<!DOCTYPE html><html><head></head><body></body></html>");
+      iframeDoc.close();
+      const flattenStyles = (source: HTMLElement, target: HTMLElement) => {
+        const computed = window.getComputedStyle(source);
+        const props = ["color","background-color","border-color","border-top-color","border-bottom-color","border-left-color","border-right-color","font-family","font-size","font-weight","font-style","line-height","letter-spacing","text-align","text-decoration","text-transform","white-space","word-spacing","padding-top","padding-right","padding-bottom","padding-left","margin-top","margin-right","margin-bottom","margin-left","display","flex-direction","align-items","justify-content","gap","width","min-width","max-width","position","top","right","bottom","left","border-width","border-style","border-radius","border-top-width","border-right-width","border-bottom-width","border-left-width","border-top-style","border-right-style","border-bottom-style","border-left-style","opacity","visibility","vertical-align","list-style-type","table-layout","border-collapse","border-spacing","flex-grow","flex-shrink","flex-basis","flex-wrap","order"];
+        for (const prop of props) {
+          let val = computed.getPropertyValue(prop);
+          if (val && val !== "initial" && val !== "inherit") {
+            if (val.includes("oklab") || val.includes("oklch") || val.includes("color-mix") || val.includes("lab(") || val.includes("lch(")) val = resolveColor(val);
+            target.style.setProperty(prop, val);
+          }
+        }
+        target.style.boxShadow = "none";
+        target.style.overflow = "visible";
+        target.style.height = "auto";
+        target.style.minHeight = "0";
+        target.style.maxHeight = "none";
+        for (let i = 0; i < source.children.length; i++) {
+          if (source.children[i] instanceof HTMLElement && target.children[i] instanceof HTMLElement) flattenStyles(source.children[i] as HTMLElement, target.children[i] as HTMLElement);
+        }
+      };
+      const clone = el.cloneNode(true) as HTMLElement;
+      iframeDoc.body.appendChild(clone);
+      iframeDoc.body.style.margin = "0";
+      iframeDoc.body.style.padding = "0";
+      clone.style.margin = "0";
+      clone.style.position = "static";
+      clone.style.overflow = "visible";
+      flattenStyles(el, clone);
+      clone.style.backgroundColor = "#ffffff";
+      const cloneHeight = clone.scrollHeight;
+      const cloneWidth = clone.scrollWidth;
+      iframe.style.height = cloneHeight + "px";
+      iframe.style.width = cloneWidth + "px";
+      const html2canvas = (await import("html2canvas")).default;
+      return await html2canvas(clone, { scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false, width: cloneWidth, height: cloneHeight, windowWidth: cloneWidth, windowHeight: cloneHeight });
+    } finally {
+      document.body.removeChild(iframe);
+    }
+  }, []);
+
+  const handleExportPDF = useCallback(async () => {
+    if (!dashboardRef.current) return;
+    setIsExporting("pdf");
+    setShowExportMenu(false);
+    try {
+      const fullCanvas = await captureContent();
+      const { jsPDF } = await import("jspdf");
+      const pdfPageWidth = 210;
+      const pdfPageHeight = 297;
+      const margin = 10;
+      const contentWidth = pdfPageWidth - margin * 2;
+      const contentHeight = pdfPageHeight - margin * 2;
+      const scaleFactor = contentWidth / fullCanvas.width;
+      const pageCanvasHeight = contentHeight / scaleFactor;
+      const totalPages = Math.ceil(fullCanvas.height / pageCanvasHeight);
+      const pdf = new jsPDF("p", "mm", "a4");
+      for (let page = 0; page < totalPages; page++) {
+        if (page > 0) pdf.addPage();
+        const sourceY = page * pageCanvasHeight;
+        const sourceH = Math.min(pageCanvasHeight, fullCanvas.height - sourceY);
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = fullCanvas.width;
+        pageCanvas.height = sourceH;
+        const ctx = pageCanvas.getContext("2d");
+        if (!ctx) continue;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        ctx.drawImage(fullCanvas, 0, sourceY, fullCanvas.width, sourceH, 0, 0, fullCanvas.width, sourceH);
+        const pageImgData = pageCanvas.toDataURL("image/jpeg", 0.92);
+        const imgH = sourceH * scaleFactor;
+        pdf.addImage(pageImgData, "JPEG", margin, margin, contentWidth, imgH);
+      }
+      const dateStr = new Date().toISOString().split("T")[0];
+      pdf.save(`Astra-M365-Insights-${strategy}-${dateStr}.pdf`);
+      toast({ title: "PDF exported", description: `Saved as ${totalPages}-page PDF.` });
+    } catch (err: any) {
+      toast({ title: "Export failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsExporting(null);
+    }
+  }, [captureContent, toast, strategy]);
+
+  const handleExportPNG = useCallback(async () => {
+    if (!dashboardRef.current) return;
+    setIsExporting("png");
+    setShowExportMenu(false);
+    try {
+      const canvas = await captureContent();
+      const link = document.createElement("a");
+      const dateStr = new Date().toISOString().split("T")[0];
+      link.download = `Astra-M365-Insights-${strategy}-${dateStr}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast({ title: "Image exported", description: "Dashboard exported as PNG." });
+    } catch (err: any) {
+      toast({ title: "Export failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsExporting(null);
+    }
+  }, [captureContent, toast, strategy]);
 
   const handleUserFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -366,6 +627,7 @@ export default function Dashboard() {
   };
 
   const handleExportXlsx = () => {
+    setShowExportMenu(false);
     const rows = optimizedData.map((u) => ({
       "Display Name": u.displayName,
       UPN: u.upn,
@@ -751,6 +1013,15 @@ export default function Dashboard() {
   const totalUsers = optimizedData.length;
   const totalStorage = optimizedData.reduce((acc, curr) => acc + curr.usageGB, 0);
 
+  const animatedUsers = useAnimatedNumber(totalUsers);
+  const animatedStorage = useAnimatedNumber(totalStorage);
+  const animatedCost = useAnimatedNumber(totalCost);
+
+  const handleStrategyChange = (key: Strategy) => {
+    setStrategy(key);
+    setStrategyKey(prev => prev + 1);
+  };
+
   const handleGenerateSummary = async () => {
     if (data.length === 0) return;
     setIsGeneratingSummary(true);
@@ -846,10 +1117,29 @@ export default function Dashboard() {
             <Upload className="h-4 w-4" />
             Import Data
           </Button>
-          <Button size="sm" className="gap-2" onClick={handleExportXlsx} data-testid="button-export">
-            <Download className="h-4 w-4" />
-            Export XLSX
-          </Button>
+          <div className="relative">
+            <Button size="sm" className="gap-2" onClick={() => setShowExportMenu(!showExportMenu)} data-testid="button-export">
+              {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Export
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+            {showExportMenu && (
+              <div className="absolute right-0 top-full mt-1 w-48 bg-card border border-border rounded-lg shadow-lg py-1 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+                <button className="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 flex items-center gap-2" onClick={handleExportXlsx} data-testid="export-xlsx">
+                  <Download className="h-4 w-4" />
+                  Export as XLSX
+                </button>
+                <button className="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 flex items-center gap-2" onClick={handleExportPDF} disabled={!!isExporting} data-testid="export-pdf">
+                  <FileDown className="h-4 w-4" />
+                  Export as PDF
+                </button>
+                <button className="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 flex items-center gap-2" onClick={handleExportPNG} disabled={!!isExporting} data-testid="export-png">
+                  <Image className="h-4 w-4" />
+                  Export as PNG
+                </button>
+              </div>
+            )}
+          </div>
           <Button 
             size="sm" 
             className="gap-2 bg-primary"
@@ -859,6 +1149,16 @@ export default function Dashboard() {
           >
             {isGeneratingSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
             Executive Summary
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9"
+            onClick={() => { setTutorialStep(0); }}
+            title="Start tutorial"
+            data-testid="button-tutorial"
+          >
+            <HelpCircle className="h-4 w-4" />
           </Button>
         </div>
       </header>
@@ -1017,12 +1317,25 @@ export default function Dashboard() {
       )}
 
       {/* Main Content */}
-      <main className="flex-1 p-8 max-w-7xl mx-auto w-full space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <main className="flex-1 p-8 max-w-7xl mx-auto w-full space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500" ref={dashboardRef}>
         
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <h2 className="text-3xl font-display font-semibold">M365 Insights</h2>
-            <p className="text-muted-foreground">Automated merge of Active Users and Mailbox Usage reports with actionable insights.</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-3xl font-display font-semibold">M365 Insights</h2>
+                <p className="text-muted-foreground">Automated merge of Active Users and Mailbox Usage reports with actionable insights.</p>
+              </div>
+              {greeting && (
+                <div className="text-right animate-in fade-in slide-in-from-right-4 duration-500">
+                  <div className="flex items-center gap-2 justify-end">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    <span className="text-lg font-semibold font-display">{greeting.message}</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{greeting.subtitle}</p>
+                </div>
+              )}
+            </div>
           </div>
 
           {data.length === 0 && !isSyncing ? (
@@ -1108,7 +1421,7 @@ export default function Dashboard() {
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="shadow-sm border-border/50">
+          <Card className="shadow-sm border-border/50 animate-stagger-1">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Total Active Users</CardTitle>
               <Users className="h-4 w-4 text-muted-foreground" />
@@ -1117,12 +1430,12 @@ export default function Dashboard() {
               {isSyncing ? (
                 <Skeleton className="h-8 w-20" />
               ) : (
-                <div className="text-3xl font-bold font-display" data-testid="text-total-users">{totalUsers}</div>
+                <div className="text-3xl font-bold font-display animate-count-up" data-testid="text-total-users">{animatedUsers}</div>
               )}
             </CardContent>
           </Card>
           
-          <Card className="shadow-sm border-border/50">
+          <Card className="shadow-sm border-border/50 animate-stagger-2">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Total Mailbox Usage</CardTitle>
               <Database className="h-4 w-4 text-muted-foreground" />
@@ -1131,12 +1444,12 @@ export default function Dashboard() {
                {isSyncing ? (
                 <Skeleton className="h-8 w-24" />
               ) : (
-                <div className="text-3xl font-bold font-display" data-testid="text-total-storage">{totalStorage.toFixed(1)} GB</div>
+                <div className="text-3xl font-bold font-display animate-count-up" data-testid="text-total-storage">{animatedStorage} GB</div>
               )}
             </CardContent>
           </Card>
 
-          <Card className={`shadow-sm border-border/50 transition-colors ${strategy !== 'current' ? 'bg-primary/5 border-primary/20' : ''}`}>
+          <Card className={`shadow-sm border-border/50 animate-stagger-3 transition-colors ${strategy !== 'current' ? 'bg-primary/5 border-primary/20' : ''}`}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Est. Monthly License Cost</CardTitle>
               <CreditCard className={`h-4 w-4 ${strategy !== 'current' ? 'text-primary' : 'text-muted-foreground'}`} />
@@ -1147,7 +1460,7 @@ export default function Dashboard() {
               ) : (
                 <div className="flex items-end gap-3" data-testid="container-cost-metric">
                   <div className={`text-3xl font-bold font-display ${strategy !== 'current' ? 'text-primary' : ''}`}>
-                    ${totalCost.toFixed(2)}
+                    ${animatedCost}
                   </div>
                   <div className="flex flex-col items-end gap-0.5 mb-1">
                     <div className="text-xs text-muted-foreground">
@@ -1317,7 +1630,7 @@ export default function Dashboard() {
                 <Card
                   key={key}
                   className={`cursor-pointer transition-all hover:border-primary/50 ${strategy === key ? 'ring-2 ring-primary border-primary' : 'border-border/50'}`}
-                  onClick={() => setStrategy(key)}
+                  onClick={() => handleStrategyChange(key)}
                   data-testid={`strategy-${key}`}
                 >
                   <CardHeader className="p-4 pb-2">
@@ -1790,14 +2103,15 @@ export default function Dashboard() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredData.map((user) => {
+                  filteredData.map((user, rowIndex) => {
                     const originalUser = data.find(u => u.id === user.id)!;
                     const isModified = strategy !== 'current' && JSON.stringify(sortLicenses(originalUser.licenses)) !== JSON.stringify(user.licenses);
                     
                     return (
                       <TableRow 
-                        key={user.id} 
-                        className={`transition-colors group ${isModified ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/20'}`} 
+                        key={`${user.id}-${strategyKey}`} 
+                        className={`transition-colors group row-stagger ${isModified ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/20'}`} 
+                        style={{ animationDelay: `${Math.min(rowIndex * 20, 400)}ms` }}
                         data-testid={`row-user-${user.id}`}
                       >
                         <TableCell>
@@ -1834,7 +2148,7 @@ export default function Dashboard() {
                                       <Popover key={`new-${i}`}>
                                         <PopoverTrigger asChild>
                                           <Badge
-                                            className={`text-xs w-fit cursor-pointer hover:opacity-80 transition-opacity ${isNew ? 'bg-primary/20 text-primary border-primary/20' : isSuite ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' : 'bg-secondary/50 border-border/40'}`}
+                                            className={`text-xs w-fit cursor-pointer badge-hover ${isNew ? 'bg-primary/20 text-primary border-primary/20' : isSuite ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' : 'bg-secondary/50 border-border/40'}`}
                                             data-testid={`badge-license-new-${i}`}
                                           >
                                             {license}
@@ -1867,7 +2181,7 @@ export default function Dashboard() {
                                       <PopoverTrigger asChild>
                                         <Badge
                                           variant="outline"
-                                          className={`text-xs w-fit cursor-pointer hover:opacity-80 transition-opacity ${isSuite ? 'border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-300' : 'border-border/60'}`}
+                                          className={`text-xs w-fit cursor-pointer badge-hover ${isSuite ? 'border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-300' : 'border-border/60'}`}
                                           data-testid={`badge-license-${i}`}
                                         >
                                           {license}
@@ -1921,7 +2235,130 @@ export default function Dashboard() {
             </Table>
           </div>
         </Card>
+        {/* Industry Insights */}
+        <Card className="border-border/50 shadow-sm">
+          <CardHeader
+            className="cursor-pointer py-3 px-6"
+            onClick={() => { setShowNews(!showNews); if (!showNews && newsItems.length === 0) loadNews(); }}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-1.5 rounded-md bg-primary/10">
+                  <Newspaper className="h-4 w-4 text-primary" />
+                </div>
+                <div>
+                  <CardTitle className="text-base">Industry Insights</CardTitle>
+                  <CardDescription className="text-xs">
+                    Latest Microsoft 365 licensing news and updates
+                  </CardDescription>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {showNews && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={(e) => { e.stopPropagation(); loadNews(); }}
+                    disabled={newsLoading}
+                    data-testid="button-refresh-news"
+                  >
+                    <RefreshCcw className={`h-3 w-3 mr-1 ${newsLoading ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </Button>
+                )}
+                {showNews ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+              </div>
+            </div>
+          </CardHeader>
+          {showNews && (
+            <CardContent className="pt-0 px-6 pb-4">
+              {newsLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <Skeleton key={i} className="h-16 w-full" />
+                  ))}
+                </div>
+              ) : newsItems.length === 0 ? (
+                <div className="text-sm text-muted-foreground text-center py-6">
+                  No news items available. Click Refresh to try again.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {newsItems.map((item, i) => (
+                    <a
+                      key={i}
+                      href={item.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block p-3 rounded-lg border border-border/50 hover:border-primary/30 hover:bg-primary/5 transition-colors"
+                      data-testid={`news-item-${i}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm leading-snug">{item.title}</div>
+                          {item.summary && (
+                            <p className="text-xs text-muted-foreground mt-1 leading-relaxed line-clamp-2">{item.summary}</p>
+                          )}
+                          {item.date && (
+                            <div className="text-[11px] text-muted-foreground mt-1.5">
+                              {new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                            </div>
+                          )}
+                        </div>
+                        <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                      </div>
+                    </a>
+                  ))}
+                  {newsCachedAt && (
+                    <div className="text-[11px] text-muted-foreground text-right">
+                      Last updated: {new Date(newsCachedAt).toLocaleTimeString()}
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          )}
+        </Card>
       </main>
+
+      {/* Tutorial Overlay */}
+      {tutorialStep >= 0 && tutorialStep < TUTORIAL_STEPS.length && (
+        <>
+          <div className="tutorial-backdrop" onClick={endTutorial} />
+          {tutorialTooltipPos && (
+            <div
+              className="tutorial-tooltip bg-card border border-border rounded-xl shadow-xl p-5"
+              style={{ top: tutorialTooltipPos.top, left: tutorialTooltipPos.left }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-primary">
+                  Step {tutorialStep + 1} of {TUTORIAL_STEPS.length}
+                </div>
+                <button onClick={endTutorial} className="text-muted-foreground hover:text-foreground" data-testid="button-skip-tutorial">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <h4 className="font-semibold text-base mb-1">{TUTORIAL_STEPS[tutorialStep].title}</h4>
+              <p className="text-sm text-muted-foreground leading-relaxed mb-4">{TUTORIAL_STEPS[tutorialStep].body}</p>
+              <div className="flex items-center justify-between">
+                <div className="flex gap-1">
+                  {TUTORIAL_STEPS.map((_, i) => (
+                    <div key={i} className={`h-1.5 w-6 rounded-full ${i === tutorialStep ? 'bg-primary' : i < tutorialStep ? 'bg-primary/30' : 'bg-muted'}`} />
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="sm" onClick={endTutorial} data-testid="button-end-tutorial">Skip</Button>
+                  <Button size="sm" onClick={nextTutorialStep} data-testid="button-next-tutorial">
+                    {tutorialStep === TUTORIAL_STEPS.length - 1 ? "Finish" : "Next"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
       <footer className="py-4 text-center text-xs text-muted-foreground border-t border-border/30">
         &copy; 2026 Cavaridge, LLC. All rights reserved.
       </footer>
