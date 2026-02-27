@@ -444,9 +444,9 @@ export default function Dashboard() {
       <header className="sticky top-0 z-10 bg-card/80 backdrop-blur-md border-b border-border px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold">
-            M
+            A
           </div>
-          <h1 className="text-xl font-semibold tracking-tight">M365 Insights</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Astra</h1>
         </div>
         <div className="flex items-center gap-3">
           {dataSource === "mock" && data.length > 0 && (
@@ -667,7 +667,7 @@ export default function Dashboard() {
         
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <h2 className="text-3xl font-display font-semibold">Astra</h2>
+            <h2 className="text-3xl font-display font-semibold">M365 Insights</h2>
             <p className="text-muted-foreground">Automated merge of Active Users and Mailbox Usage reports with actionable insights.</p>
           </div>
 
