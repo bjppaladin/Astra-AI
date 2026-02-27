@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useLocation } from "wouter";
-import { ArrowLeft, FileText, Loader2, Printer } from "lucide-react";
+import { ArrowLeft, FileText, Loader2, Printer, Download, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { generateSummaryStream, fetchSummary } from "@/lib/api";
@@ -13,36 +13,69 @@ export default function ExecutiveSummaryPage() {
   const [content, setContent] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDone, setIsDone] = useState(false);
+  const [wordCount, setWordCount] = useState(0);
+  const [elapsedTime, setElapsedTime] = useState(0);
   const contentRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetchSummary(reportId).then((existing) => {
       if (existing) {
         setContent(existing.content);
         setIsDone(true);
+        setWordCount(existing.content.split(/\s+/).filter(Boolean).length);
       } else {
         const stored = sessionStorage.getItem(`summary_payload_${reportId}`);
         if (stored) {
           const payload = JSON.parse(stored);
-          setIsGenerating(true);
-          generateSummaryStream(
-            reportId,
-            payload,
-            (chunk) => setContent((prev) => prev + chunk),
-            () => {
-              setIsGenerating(false);
-              setIsDone(true);
-              sessionStorage.removeItem(`summary_payload_${reportId}`);
-            },
-            (err) => {
-              setIsGenerating(false);
-              setContent((prev) => prev + `\n\nError: ${err}`);
-            }
-          );
+          startGeneration(payload);
         }
       }
     });
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
   }, [reportId]);
+
+  const startGeneration = (payload: any) => {
+    setIsGenerating(true);
+    setContent("");
+    setElapsedTime(0);
+    const startTime = Date.now();
+    timerRef.current = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+
+    generateSummaryStream(
+      reportId,
+      payload,
+      (chunk) => {
+        setContent((prev) => {
+          const next = prev + chunk;
+          setWordCount(next.split(/\s+/).filter(Boolean).length);
+          return next;
+        });
+      },
+      () => {
+        setIsGenerating(false);
+        setIsDone(true);
+        if (timerRef.current) clearInterval(timerRef.current);
+        sessionStorage.removeItem(`summary_payload_${reportId}`);
+      },
+      (err) => {
+        setIsGenerating(false);
+        if (timerRef.current) clearInterval(timerRef.current);
+        setContent((prev) => prev + `\n\nError: ${err}`);
+      }
+    );
+  };
+
+  const handleRegenerate = () => {
+    const stored = sessionStorage.getItem(`summary_payload_${reportId}`);
+    if (stored) {
+      startGeneration(JSON.parse(stored));
+    }
+  };
 
   useEffect(() => {
     if (contentRef.current && isGenerating) {
@@ -51,75 +84,228 @@ export default function ExecutiveSummaryPage() {
   }, [content, isGenerating]);
 
   const renderMarkdown = (md: string) => {
-    let html = md
-      .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold mt-6 mb-2 font-display">$1</h3>')
-      .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold mt-8 mb-3 font-display text-primary">$1</h2>')
-      .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold mt-6 mb-4 font-display">$1</h1>')
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      .replace(/^\| (.+)$/gm, (match) => {
-        const cells = match.split("|").filter(Boolean).map((c) => c.trim());
-        const isHeader = cells.every((c) => /^[-:]+$/.test(c));
-        if (isHeader) return '';
-        return `<tr>${cells.map((c) => `<td class="border border-border/50 px-3 py-2 text-sm">${c}</td>`).join("")}</tr>`;
-      })
-      .replace(/^- (.+)$/gm, '<li class="ml-4 mb-1">$1</li>')
-      .replace(/^(\d+)\. (.+)$/gm, '<li class="ml-4 mb-1"><span class="font-medium">$1.</span> $2</li>')
-      .replace(/\n\n/g, '<br/><br/>');
+    const lines = md.split("\n");
+    const blocks: string[] = [];
+    let i = 0;
 
-    html = html.replace(/((?:<tr>.*?<\/tr>\s*)+)/gs, '<table class="w-full border-collapse my-4 rounded-lg overflow-hidden">$1</table>');
-    html = html.replace(/((?:<li.*?<\/li>\s*)+)/gs, '<ul class="my-2">$1</ul>');
+    const inline = (text: string) =>
+      text
+        .replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold text-foreground">$1</strong>')
+        .replace(/\*(.+?)\*/g, "<em>$1</em>")
+        .replace(/`(.+?)`/g, '<code class="px-1.5 py-0.5 bg-muted/60 rounded text-xs font-mono">$1</code>');
 
-    return html;
+    const cellClass = (raw: string) => {
+      const hasEmoji = /🔴|🟡|🟢/.test(raw);
+      const hasDollar = /\$[\d,]+/.test(raw);
+      const hasPlus = /^\+/.test(raw.trim());
+      const hasMinus = /^[-−]/.test(raw.trim()) && hasDollar;
+      let cls = "text-sm";
+      if (hasDollar && hasPlus) cls += " text-red-600 dark:text-red-400 font-medium";
+      else if (hasDollar && hasMinus) cls += " text-emerald-600 dark:text-emerald-400 font-medium";
+      else if (hasDollar) cls += " font-medium tabular-nums";
+      if (hasEmoji) cls += " text-center";
+      return cls;
+    };
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      if (/^#{1,4} /.test(line)) {
+        const match = line.match(/^(#{1,4}) (.+)$/);
+        if (match) {
+          const level = match[1].length;
+          const text = inline(match[2]);
+          if (level === 1)
+            blocks.push(`<h1 class="text-2xl font-bold mt-2 mb-6 font-display text-foreground text-center tracking-tight">${text}</h1>`);
+          else if (level === 2)
+            blocks.push(`<div class="mt-10 mb-4"><h2 class="text-xl font-bold font-display text-primary pb-2 border-b-2 border-primary/20">${text}</h2></div>`);
+          else if (level === 3)
+            blocks.push(`<h3 class="text-lg font-bold mt-7 mb-3 font-display text-foreground flex items-center gap-2"><span class="inline-block w-1 h-5 bg-primary/70 rounded-full"></span>${text}</h3>`);
+          else
+            blocks.push(`<h4 class="text-base font-semibold mt-5 mb-2 font-display text-foreground/90">${text}</h4>`);
+        }
+        i++;
+        continue;
+      }
+
+      if (/^---+$|^\*\*\*+$|^___+$/.test(line.trim())) {
+        blocks.push('<hr class="my-6 border-border/40" />');
+        i++;
+        continue;
+      }
+
+      if (/^> /.test(line)) {
+        const bqLines: string[] = [];
+        while (i < lines.length && /^> (.*)$/.test(lines[i])) {
+          bqLines.push(lines[i].replace(/^> /, ""));
+          i++;
+        }
+        blocks.push(`<blockquote class="border-l-4 border-primary/60 bg-primary/5 pl-4 pr-3 py-3 my-4 text-sm italic text-foreground/90 rounded-r-md">${bqLines.map(inline).join("<br/>")}</blockquote>`);
+        continue;
+      }
+
+      if (/^\|/.test(line)) {
+        const tableRows: string[][] = [];
+        let headerIdx = -1;
+        let rowIdx = 0;
+        while (i < lines.length && /^\|/.test(lines[i])) {
+          const cells = lines[i].split("|").filter(Boolean).map((c) => c.trim());
+          if (cells.every((c) => /^[-:]+$/.test(c))) {
+            headerIdx = rowIdx;
+          } else {
+            tableRows.push(cells);
+            rowIdx++;
+          }
+          i++;
+        }
+
+        let tableHtml = "";
+        tableRows.forEach((cells, idx) => {
+          const isHeader = headerIdx >= 0 && idx === 0;
+          const tag = isHeader ? "th" : "td";
+          const trClass = isHeader
+            ? "bg-muted/50 font-medium text-xs uppercase tracking-wider"
+            : "hover:bg-muted/20 transition-colors";
+          tableHtml += `<tr class="${trClass}">${cells
+            .map((c) => {
+              const cls = isHeader ? "text-sm font-medium" : cellClass(c);
+              return `<${tag} class="border border-border/40 px-3 py-2.5 ${cls}">${inline(c)}</${tag}>`;
+            })
+            .join("")}</tr>`;
+        });
+
+        blocks.push(`<div class="overflow-x-auto my-5 rounded-lg border border-border/50 shadow-sm"><table class="w-full border-collapse text-sm">${tableHtml}</table></div>`);
+        continue;
+      }
+
+      if (/^(\d+)\. /.test(line)) {
+        const items: string[] = [];
+        while (i < lines.length && /^(\d+)\. (.+)$/.test(lines[i])) {
+          const m = lines[i].match(/^(\d+)\. (.+)$/);
+          if (m) items.push(`<li class="ml-5 mb-2 text-sm leading-relaxed list-decimal"><span class="font-semibold text-primary">${m[1]}.</span> ${inline(m[2])}</li>`);
+          i++;
+        }
+        blocks.push(`<ol class="my-3 space-y-1">${items.join("")}</ol>`);
+        continue;
+      }
+
+      if (/^[-*] /.test(line)) {
+        const items: string[] = [];
+        while (i < lines.length && /^[-*] (.+)$/.test(lines[i])) {
+          const m = lines[i].match(/^[-*] (.+)$/);
+          if (m) items.push(`<li class="ml-5 mb-1.5 text-sm leading-relaxed list-disc">${inline(m[1])}</li>`);
+          i++;
+        }
+        blocks.push(`<ul class="my-3 space-y-0.5">${items.join("")}</ul>`);
+        continue;
+      }
+
+      if (line.trim() === "") {
+        i++;
+        continue;
+      }
+
+      const paraLines: string[] = [];
+      while (i < lines.length && lines[i].trim() !== "" && !/^#{1,4} |^\||^[-*] |^\d+\. |^> |^---+$|^\*\*\*+$|^___+$/.test(lines[i])) {
+        paraLines.push(lines[i]);
+        i++;
+      }
+      blocks.push(`<p class="mb-3 text-sm leading-relaxed text-foreground/85">${inline(paraLines.join(" "))}</p>`);
+    }
+
+    return `<div class="text-sm leading-relaxed text-foreground/85">${blocks.join("\n")}</div>`;
+  };
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col font-sans text-foreground">
-      <header className="sticky top-0 z-10 bg-card/80 backdrop-blur-md border-b border-border px-6 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/20 flex flex-col font-sans text-foreground">
+      <header className="sticky top-0 z-10 bg-card/90 backdrop-blur-lg border-b border-border/50 px-6 py-3 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/")} data-testid="button-back">
-            <ArrowLeft className="h-4 w-4 mr-2" />
+          <Button variant="ghost" size="sm" onClick={() => navigate("/")} data-testid="button-back" className="gap-2">
+            <ArrowLeft className="h-4 w-4" />
             Back to Dashboard
           </Button>
+          {isGenerating && (
+            <div className="flex items-center gap-3 ml-4 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+                <span>Generating</span>
+              </div>
+              <span className="tabular-nums">{formatTime(elapsedTime)}</span>
+              <span className="text-border">|</span>
+              <span className="tabular-nums">{wordCount.toLocaleString()} words</span>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {isDone && (
-            <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="button-print">
-              <Printer className="h-4 w-4 mr-2" />
-              Print / PDF
-            </Button>
+            <>
+              <span className="text-xs text-muted-foreground mr-2 tabular-nums" data-testid="text-word-count">
+                {wordCount.toLocaleString()} words
+              </span>
+              <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="button-print" className="gap-2">
+                <Printer className="h-4 w-4" />
+                Print / PDF
+              </Button>
+            </>
           )}
         </div>
       </header>
 
-      <main className="flex-1 p-8 max-w-4xl mx-auto w-full">
-        <Card className="shadow-lg border-border/50">
-          <CardHeader className="border-b border-border/50 bg-muted/10">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-primary/10">
-                <FileText className="h-5 w-5 text-primary" />
+      <main className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full">
+        <Card className="shadow-xl border-border/30 bg-card/95 backdrop-blur-sm">
+          <CardHeader className="border-b border-border/30 bg-gradient-to-r from-primary/5 to-transparent px-8 py-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="p-2.5 rounded-xl bg-primary/10 ring-1 ring-primary/20">
+                  <FileText className="h-6 w-6 text-primary" />
+                </div>
+                <div>
+                  <CardTitle className="font-display text-xl tracking-tight" data-testid="text-summary-title">Executive Briefing</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    AI-powered vCIO analysis — Microsoft 365 licensing optimization
+                  </p>
+                </div>
               </div>
-              <div>
-                <CardTitle className="font-display text-xl">Executive Summary</CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">
-                  AI-generated vCIO analysis for C-Suite review
-                </p>
-              </div>
+              {isDone && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-full text-xs font-medium ring-1 ring-emerald-500/20">
+                  <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  Complete
+                </div>
+              )}
             </div>
           </CardHeader>
-          <CardContent className="p-8">
+          <CardContent className="p-6 md:p-10">
             {!content && isGenerating && (
-              <div className="flex flex-col items-center justify-center py-16 gap-4">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="text-muted-foreground">Generating executive summary...</p>
+              <div className="flex flex-col items-center justify-center py-20 gap-5">
+                <div className="relative">
+                  <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+                  <Loader2 className="h-10 w-10 animate-spin text-primary relative" />
+                </div>
+                <div className="text-center">
+                  <p className="font-medium text-foreground">Analyzing your Microsoft 365 environment...</p>
+                  <p className="text-sm text-muted-foreground mt-1">Building comprehensive executive briefing</p>
+                </div>
               </div>
             )}
 
             {!content && !isGenerating && !isDone && (
-              <div className="flex flex-col items-center justify-center py-16 gap-4">
-                <p className="text-muted-foreground">No summary found for this report.</p>
-                <Button variant="outline" onClick={() => navigate("/")} data-testid="button-go-back">
-                  Go back to generate one
+              <div className="flex flex-col items-center justify-center py-20 gap-5">
+                <div className="p-4 rounded-full bg-muted/50">
+                  <FileText className="h-8 w-8 text-muted-foreground" />
+                </div>
+                <div className="text-center">
+                  <p className="font-medium text-foreground">No summary found for this report</p>
+                  <p className="text-sm text-muted-foreground mt-1">Go back to the dashboard to generate one</p>
+                </div>
+                <Button variant="outline" onClick={() => navigate("/")} data-testid="button-go-back" className="gap-2 mt-2">
+                  <ArrowLeft className="h-4 w-4" />
+                  Back to Dashboard
                 </Button>
               </div>
             )}
@@ -127,19 +313,38 @@ export default function ExecutiveSummaryPage() {
             {content && (
               <div
                 ref={contentRef}
-                className="prose prose-sm max-w-none dark:prose-invert leading-relaxed"
+                className="max-w-none executive-report print:text-black"
                 dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+                data-testid="text-summary-content"
               />
             )}
 
             {isGenerating && content && (
-              <div className="flex items-center gap-2 mt-6 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Generating...
+              <div className="flex items-center gap-3 mt-8 pt-4 border-t border-border/30">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                <span className="text-sm text-muted-foreground">
+                  Generating analysis... {wordCount.toLocaleString()} words written ({formatTime(elapsedTime)})
+                </span>
+                <div className="flex-1" />
+                <div className="flex gap-1">
+                  {[0, 1, 2].map((i) => (
+                    <div
+                      key={i}
+                      className="h-1.5 w-1.5 rounded-full bg-primary/60 animate-bounce"
+                      style={{ animationDelay: `${i * 0.15}s` }}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </CardContent>
         </Card>
+
+        {isDone && (
+          <div className="mt-6 text-center text-xs text-muted-foreground pb-8">
+            Generated by MERIDIAN vCIO Advisory Engine — {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+          </div>
+        )}
       </main>
     </div>
   );

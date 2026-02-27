@@ -508,31 +508,210 @@ export async function registerRoutes(
 
       const { costCurrent, costSecurity, costSaving, costBalanced, costCustom, commitment, userData } = req.body;
 
-      const commitmentLabel = commitment === "annual" ? "Annual Commitment" : "Monthly Commitment";
+      const commitmentLabel = commitment === "annual" ? "Annual Commitment (15% discount)" : "Monthly Commitment";
+      const annualMultiplier = commitment === "annual" ? 12 : 12;
+      const users = userData as any[];
+      const totalUsers = users.length;
 
-      const prompt = `You are a senior virtual CIO (vCIO) preparing an executive summary for a C-Suite audience about Microsoft 365 licensing optimization. You must be authoritative, data-driven, and persuasive. This document needs to withstand the scrutiny of executives who will challenge every recommendation.
+      const deptBreakdown: Record<string, { count: number; totalCost: number; licenses: Record<string, number> }> = {};
+      for (const u of users) {
+        const dept = u.department || "Unassigned";
+        if (!deptBreakdown[dept]) deptBreakdown[dept] = { count: 0, totalCost: 0, licenses: {} };
+        deptBreakdown[dept].count++;
+        deptBreakdown[dept].totalCost += u.cost;
+        for (const lic of u.licenses) {
+          deptBreakdown[dept].licenses[lic] = (deptBreakdown[dept].licenses[lic] || 0) + 1;
+        }
+      }
 
-Here is the data:
+      const licenseCounts: Record<string, number> = {};
+      for (const u of users) {
+        for (const lic of u.licenses) {
+          licenseCounts[lic] = (licenseCounts[lic] || 0) + 1;
+        }
+      }
 
-BILLING BASIS: ${commitmentLabel}
-CURRENT MONTHLY SPEND: $${costCurrent.toFixed(2)}
-OPTION 1 — MAXIMIZE SECURITY: $${costSecurity.toFixed(2)} (${costSecurity > costCurrent ? '+' : ''}$${(costSecurity - costCurrent).toFixed(2)}/mo delta)
-OPTION 2 — MINIMIZE COST: $${costSaving.toFixed(2)} (${costSaving > costCurrent ? '+' : ''}$${(costSaving - costCurrent).toFixed(2)}/mo delta)
-OPTION 3 — BALANCED APPROACH: $${costBalanced.toFixed(2)} (${costBalanced > costCurrent ? '+' : ''}$${(costBalanced - costCurrent).toFixed(2)}/mo delta)
-${costCustom !== undefined ? `OPTION 4 — CUSTOM STRATEGY: $${costCustom.toFixed(2)} (${costCustom > costCurrent ? '+' : ''}$${(costCustom - costCurrent).toFixed(2)}/mo delta)` : ''}
+      const avgMailboxUsage = users.length > 0 ? users.reduce((a: number, u: any) => a + (u.usageGB || 0), 0) / users.length : 0;
+      const highUsageUsers = users.filter((u: any) => u.maxGB > 0 && (u.usageGB / u.maxGB) > 0.8);
+      const lowUsageUsers = users.filter((u: any) => u.maxGB > 0 && (u.usageGB / u.maxGB) < 0.1);
+      const criticalUsers = users.filter((u: any) => u.status === "Critical");
+      const warningUsers = users.filter((u: any) => u.status === "Warning");
 
-USER DIRECTORY (${(userData as any[]).length} users):
-${(userData as any[]).map((u: any) => `- ${u.displayName} (${u.department}): Current licenses: ${u.licenses.join(', ')}; Mailbox: ${u.usageGB}GB/${u.maxGB}GB; Current cost: $${u.cost}/mo`).join('\n')}
+      const fmtDelta = (val: number) => `${val > 0 ? '+' : ''}$${val.toFixed(2)}`;
 
-Write a polished executive summary in Markdown that includes:
-1. **Executive Overview** — A 2-3 sentence summary of the current licensing posture and why action is needed.
-2. **Cost Comparison Table** — A clear comparison of all options (Current State, Maximize Security, Minimize Cost, Balanced${costCustom !== undefined ? ', Custom' : ''}) showing monthly cost, annual projected cost, delta vs current, and a one-line rationale.
-3. **Risk Assessment** — For each option, highlight key risks (security gaps, compliance exposure, productivity impact, budget impact). Be specific — reference actual user counts and license tiers from the data.
-4. **Recommendation** — Your professional recommendation as vCIO with a clear rationale. Consider the balance of security posture, cost efficiency, and operational impact. Be decisive.
-5. **Implementation Roadmap** — A phased approach (30/60/90 day) for executing the recommended strategy.
-6. **Next Steps** — 3-4 concrete action items for leadership.
+      const deptSummary = Object.entries(deptBreakdown)
+        .sort((a, b) => b[1].totalCost - a[1].totalCost)
+        .map(([dept, info]) => `  ${dept}: ${info.count} users, $${info.totalCost.toFixed(2)}/mo — licenses: ${Object.entries(info.licenses).map(([l, c]) => `${l} (${c})`).join(", ")}`)
+        .join("\n");
 
-Write with confidence and authority. Use precise dollar figures. Reference specific license tiers (E1, E3, E5) and their security implications. Do not hedge excessively — executives want clear direction.`;
+      const licenseDistribution = Object.entries(licenseCounts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([lic, count]) => `  ${lic}: ${count} users (${((count / totalUsers) * 100).toFixed(0)}%)`)
+        .join("\n");
+
+      const prompt = `You are a seasoned virtual CIO (vCIO) and Microsoft 365 licensing strategist with 20+ years of experience advising mid-market and enterprise IT leaders. You are preparing a comprehensive executive briefing that will be presented to the C-Suite (CEO, CFO, COO) and potentially shared with the board. This document must be board-ready: data-rich, visually structured, strategically sound, and compelling enough to drive a decision.
+
+Your writing style: authoritative but accessible, never condescending. Use precise financial figures. Lead with insight, not just data. Every paragraph must earn its place.
+
+═══════════════════════════════════════════════════
+TENANT OVERVIEW
+═══════════════════════════════════════════════════
+Total Licensed Users: ${totalUsers}
+Billing Basis: ${commitmentLabel}
+Current Monthly Spend: $${costCurrent.toFixed(2)}
+Current Annual Run Rate: $${(costCurrent * annualMultiplier).toFixed(2)}
+Report Generated: ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+
+═══════════════════════════════════════════════════
+LICENSE DISTRIBUTION
+═══════════════════════════════════════════════════
+${licenseDistribution}
+
+═══════════════════════════════════════════════════
+DEPARTMENT BREAKDOWN (by spend, descending)
+═══════════════════════════════════════════════════
+${deptSummary}
+
+═══════════════════════════════════════════════════
+MAILBOX & STORAGE ANALYTICS
+═══════════════════════════════════════════════════
+Average Mailbox Usage: ${avgMailboxUsage.toFixed(1)} GB
+Users Near Capacity (>80%): ${highUsageUsers.length} users${highUsageUsers.length > 0 ? ` — ${highUsageUsers.map((u: any) => `${u.displayName} (${u.usageGB.toFixed(1)}/${u.maxGB}GB)`).join(", ")}` : ""}
+Users With Minimal Usage (<10%): ${lowUsageUsers.length} users${lowUsageUsers.length > 0 ? ` — suggests potential over-licensing or inactive accounts` : ""}
+${criticalUsers.length > 0 ? `Critical Status Users: ${criticalUsers.length} — ${criticalUsers.map((u: any) => u.displayName).join(", ")}` : ""}
+${warningUsers.length > 0 ? `Warning Status Users: ${warningUsers.length} — ${warningUsers.map((u: any) => u.displayName).join(", ")}` : ""}
+
+═══════════════════════════════════════════════════
+STRATEGY COST MODELS
+═══════════════════════════════════════════════════
+CURRENT STATE:        $${costCurrent.toFixed(2)}/mo | $${(costCurrent * 12).toFixed(2)}/yr
+MAXIMIZE SECURITY:    $${costSecurity.toFixed(2)}/mo | $${(costSecurity * 12).toFixed(2)}/yr | Delta: ${fmtDelta(costSecurity - costCurrent)}/mo (${fmtDelta((costSecurity - costCurrent) * 12)}/yr)
+MINIMIZE COST:        $${costSaving.toFixed(2)}/mo | $${(costSaving * 12).toFixed(2)}/yr | Delta: ${fmtDelta(costSaving - costCurrent)}/mo (${fmtDelta((costSaving - costCurrent) * 12)}/yr)
+BALANCED APPROACH:    $${costBalanced.toFixed(2)}/mo | $${(costBalanced * 12).toFixed(2)}/yr | Delta: ${fmtDelta(costBalanced - costCurrent)}/mo (${fmtDelta((costBalanced - costCurrent) * 12)}/yr)
+${costCustom !== undefined && costCustom !== null ? `CUSTOM STRATEGY:      $${costCustom.toFixed(2)}/mo | $${(costCustom * 12).toFixed(2)}/yr | Delta: ${fmtDelta(costCustom - costCurrent)}/mo (${fmtDelta((costCustom - costCurrent) * 12)}/yr)` : ""}
+
+═══════════════════════════════════════════════════
+FULL USER DIRECTORY
+═══════════════════════════════════════════════════
+${users.map((u: any) => `• ${u.displayName} | ${u.upn || "N/A"} | ${u.department || "—"} | Licenses: ${u.licenses.join(", ")} | Mailbox: ${u.usageGB}GB/${u.maxGB}GB (${u.maxGB > 0 ? ((u.usageGB / u.maxGB) * 100).toFixed(0) : 0}%) | $${u.cost}/mo | Status: ${u.status || "Active"}`).join("\n")}
+
+═══════════════════════════════════════════════════
+DELIVERABLE INSTRUCTIONS
+═══════════════════════════════════════════════════
+
+Write a comprehensive, board-ready executive briefing in Markdown. This must feel like a document from a top-tier consulting firm — structured, insightful, and actionable. Use the exact structure below. Do NOT skip any section. Every section must contain substantive analysis.
+
+# Microsoft 365 Licensing Optimization — Executive Briefing
+
+Start with a one-line date stamp and "Prepared by: vCIO Advisory" line.
+
+## 1. Executive Summary
+Write 3-4 sentences that a CEO can read in 30 seconds and immediately understand:
+- What the current spend is and whether it's optimized
+- The single biggest finding or opportunity
+- The financial impact of taking action
+- A confident, decisive tone
+
+## 2. Current State Assessment
+
+### 2a. Licensing Landscape
+Analyze the license distribution across the organization. Identify patterns: are departments properly tiered? Are expensive E5 licenses going to users who don't need advanced security/compliance features? Are there users on E1 who may need more capabilities? Call out specific names, departments, and license mismatches.
+
+### 2b. Storage & Mailbox Health
+Analyze mailbox utilization. Identify users approaching capacity who need attention. Flag users with minimal usage that suggest over-provisioning or inactive accounts. Reference specific users and percentages.
+
+### 2c. Cost Distribution by Department
+Break down spending by department. Identify which departments are driving the most cost and whether that spend is justified by their role/needs.
+
+## 3. Strategy Analysis
+
+For EACH strategy (Maximize Security, Minimize Cost, Balanced${costCustom !== undefined && costCustom !== null ? ", Custom" : ""}), provide:
+
+### 3a. Cost Comparison Matrix
+A Markdown table with columns: Strategy | Monthly Cost | Annual Cost | Monthly Delta | Annual Delta | Cost per User
+Include Current State as the baseline row.
+
+### 3b. Maximize Security — Deep Dive
+- What changes: which users get upgraded/changed and why
+- Security posture improvements: specific capabilities gained (Defender for Office 365, DLP, eDiscovery, Conditional Access, etc.)
+- Compliance implications: regulatory frameworks supported (SOC 2, HIPAA, GDPR readiness)
+- Risks if NOT chosen: specific threat vectors left open
+- Financial impact with precise figures
+
+### 3c. Minimize Cost — Deep Dive
+- What changes: which licenses get downgraded/removed and specifically for whom
+- Dollar savings with precise monthly and annual figures
+- What capabilities are lost and who is impacted
+- Acceptable risk tradeoffs vs. unacceptable ones
+- Which cost removals are "no-brainers" vs. which carry risk
+
+### 3d. Balanced Approach — Deep Dive
+- The "sweet spot" rationale: how this strategy cherry-picks the best of both
+- Who gets upgraded, who gets downgraded, and the logic behind each
+- Net financial impact
+- Why this often represents the optimal risk-adjusted return
+
+${costCustom !== undefined && costCustom !== null ? `### 3e. Custom Strategy — Deep Dive
+- Analyze the custom rules applied and their collective impact
+- Financial outcome and comparison to other strategies
+- Strengths and gaps of this custom approach` : ""}
+
+## 4. Risk Matrix
+Create a risk assessment table with columns: Risk Category | Current State | If Maximize Security | If Minimize Cost | If Balanced
+Risk categories MUST include:
+- Data Breach Exposure
+- Regulatory Compliance Gap
+- Productivity/Collaboration Impact
+- Budget Overrun Risk
+- Vendor Lock-in Risk
+- User Adoption Risk
+Use severity ratings: 🔴 High | 🟡 Medium | 🟢 Low — with a brief explanation for each cell.
+
+## 5. vCIO Recommendation
+This is where you earn your fee. Be decisive and specific:
+- State your recommended strategy clearly in the first sentence
+- Justify with 3 specific data-backed reasons from the analysis
+- Quantify the expected ROI (savings or security value)
+- Address the most likely executive objection and preempt it
+- If the balanced approach is best, explain why the extremes are suboptimal
+- If security demands higher spend, frame it as risk mitigation ROI, not just cost
+
+## 6. Implementation Roadmap
+
+### Phase 1: Quick Wins (Days 1–30)
+Specific license changes that can be made immediately with zero disruption. Name the users and changes.
+
+### Phase 2: Strategic Migrations (Days 31–60)
+License tier changes that require change management, user communication, or training. Detail the communication plan.
+
+### Phase 3: Optimization & Monitoring (Days 61–90)
+Ongoing monitoring, adoption metrics, and fine-tuning. Include KPIs to track success.
+
+## 7. Financial Summary
+A final table showing:
+- Current annual spend
+- Recommended annual spend
+- Net annual savings (or investment)
+- 3-year projected impact
+- ROI percentage
+
+## 8. Next Steps
+5-6 numbered, concrete action items with suggested owners (IT Director, CFO, CISO, etc.) and target dates relative to approval.
+
+═══════════════════════════════════════════════════
+FORMATTING RULES
+═══════════════════════════════════════════════════
+- Use ## for main sections, ### for subsections
+- Use Markdown tables with proper alignment for all tabular data
+- Use **bold** for key figures, findings, and recommendations
+- Use bullet points for lists, numbered lists for action items
+- Use > blockquotes for key callouts or pull quotes that executives should notice
+- Keep paragraphs concise — 2-4 sentences each
+- Every claim must reference specific data from above
+- Dollar figures must be precise to two decimal places
+- Do NOT use placeholder text — everything must be derived from the actual data provided
+- Write at least 2000 words of substantive analysis`;
+
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -540,9 +719,16 @@ Write with confidence and authority. Use precise dollar figures. Reference speci
 
       const stream = await openrouter.chat.completions.create({
         model: "anthropic/claude-sonnet-4",
-        messages: [{ role: "user", content: prompt }],
+        messages: [
+          {
+            role: "system",
+            content: "You are a world-class vCIO consultant delivering board-ready Microsoft 365 licensing analysis. Your output is polished, data-dense, and strategically decisive. You write in clean Markdown with proper tables, headers, and formatting. Every recommendation is backed by specific data points from the user directory provided.",
+          },
+          { role: "user", content: prompt },
+        ],
         stream: true,
-        max_tokens: 4096,
+        max_tokens: 8192,
+        temperature: 0.4,
       });
 
       let fullContent = "";
