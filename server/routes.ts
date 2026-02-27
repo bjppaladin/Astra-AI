@@ -222,7 +222,14 @@ export async function registerRoutes(
 
       const redirectUri = getRedirectUri(req);
       const authUrl = getAuthUrl(redirectUri, state);
-      res.json({ authUrl });
+
+      req.session.save((err) => {
+        if (err) {
+          console.error("Session save error:", err);
+          return res.status(500).json({ error: "Failed to save session" });
+        }
+        res.json({ authUrl });
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

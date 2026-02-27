@@ -25,6 +25,8 @@ declare module "express-session" {
 
 const PgSession = connectPgSimple(session);
 
+app.set("trust proxy", 1);
+
 app.use(
   session({
     store: new PgSession({
@@ -34,9 +36,9 @@ app.use(
     }),
     secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex"),
     resave: false,
-    saveUninitialized: false,
+    saveUninitialized: true,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      secure: true,
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000,
       sameSite: "lax",
