@@ -1,0 +1,137 @@
+IMPORTANT: This adds new settings and modifies ONLY the report generation
+output layer. It does NOT change any existing UI views, scoring, or analysis.
+If report generation doesn't exist yet, create the branding system anyway —
+it will be consumed when reports are built.
+
+Read the entire prompt before making changes.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — Database: Organization Branding Table
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create a NEW migration:
+
+CREATE TABLE organization_branding (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL UNIQUE,
+  
+  -- Branding fields
+  company_name VARCHAR(255),
+  logo_url TEXT,                    -- path to uploaded logo
+  logo_width_px INTEGER DEFAULT 200,
+  primary_color VARCHAR(7) DEFAULT '#1a56db',   -- hex color
+  secondary_color VARCHAR(7) DEFAULT '#6b7280',
+  accent_color VARCHAR(7) DEFAULT '#059669',
+  
+  -- Report customization
+  report_header_text VARCHAR(255),    -- e.g. "IT Due Diligence Assessment"
+  report_footer_text VARCHAR(255),    -- e.g. "Prepared by Acme Consulting"
+  confidentiality_notice TEXT DEFAULT 'CONFIDENTIAL — For intended recipients only.',
+  
+  -- Contact info for report cover page
+  contact_name VARCHAR(255),
+  contact_email VARCHAR(255),
+  contact_phone VARCHAR(50),
+  website VARCHAR(255),
+  
+  -- Feature flags
+  show_meridian_badge BOOLEAN DEFAULT TRUE,  -- "Powered by MERIDIAN" badge
+  custom_cover_page BOOLEAN DEFAULT FALSE,
+  
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — Logo Upload Endpoint
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create POST /api/settings/branding/logo
+  - Accepts image file upload (PNG, JPG, SVG)
+  - Max 2MB
+  - Store in your file storage (local filesystem or whatever the app uses)
+  - Save the path to organization_branding.logo_url
+  - Return the URL
+
+Create GET /api/settings/branding
+  - Returns the full branding object for the current tenant
+
+Create PUT /api/settings/branding
+  - Updates branding fields (all fields from the table except id/tenant_id)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — Branding Settings Page
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Add a new section to the existing Organization Settings page (or create
+one if it doesn't exist) under a "Report Branding" tab/section.
+
+LAYOUT:
+┌────────────────────────────────────────────────────────────────┐
+│  Report Branding                                               │
+│                                                                │
+│  Company Logo                                                  │
+│  ┌──────────┐                                                  │
+│  │  [logo]  │  [Upload New Logo]  Max 2MB, PNG/JPG/SVG        │
+│  └──────────┘                                                  │
+│  Logo width: [200] px                                          │
+│                                                                │
+│  Company Name:    [_________________________]                  │
+│  Primary Color:   [#1a56db] 🎨                                │
+│  Secondary Color: [#6b7280] 🎨                                │
+│  Accent Color:    [#059669] 🎨                                │
+│                                                                │
+│  Report Header:   [IT Due Diligence Assessment_____]           │
+│  Report Footer:   [Prepared by Your Company________]           │
+│  Confidentiality: [CONFIDENTIAL — For intended...]             │
+│                                                                │
+│  Contact Information (shown on cover page)                     │
+│  Name:  [_________]  Email: [___________]                      │
+│  Phone: [_________]  Web:   [___________]                      │
+│                                                                │
+│  ☑ Show "Powered by MERIDIAN" badge on reports                │
+│                                                                │
+│  ── Live Preview ──────────────────────────                    │
+│  ┌─────────────────────────────────────┐                      │
+│  │  [LOGO]                             │                      │
+│  │  IT Due Diligence Assessment        │                      │
+│  │  ─────────────────────────          │                      │
+│  │  Deal Name: Sample Deal             │                      │
+│  │  Prepared for: Client Name          │                      │
+│  │  Date: Feb 26, 2026                 │                      │
+│  │                                     │                      │
+│  │  Prepared by Your Company           │                      │
+│  │  contact@example.com                │                      │
+│  │               Powered by MERIDIAN   │                      │
+│  └─────────────────────────────────────┘                      │
+│                                                                │
+│  [Save Branding Settings]                                      │
+└────────────────────────────────────────────────────────────────┘
+
+The live preview updates in real time as fields are changed.
+Color pickers should be proper color picker inputs (type="color").
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4 — Branding Integration Helper
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create a utility function: getBrandingForReport(tenantId)
+
+This function:
+1. Queries organization_branding for the tenant
+2. Returns a branding object with all values, using defaults for any
+   missing fields
+3. If no branding record exists, returns MERIDIAN defaults:
+   - company_name: "MERIDIAN"
+   - logo: MERIDIAN logo (create a simple SVG or use text)
+   - primary_color: "#1a56db"
+   - report_header: "IT Due Diligence Assessment"
+   - etc.
+
+This function will be called by the report generation code (existing or
+future) to inject branding into PDF/DOCX headers, footers, and cover pages.
+
+Export this function from a shared location so report generators can import it.
+
+DO NOT modify any existing views, routes, or components beyond adding the
+new settings section.

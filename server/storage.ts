@@ -1,7 +1,7 @@
 import { db } from "./db";
-import { reports, executiveSummaries, users } from "@shared/schema";
-import type { User, InsertUser, Report, InsertReport, ExecutiveSummary, InsertExecutiveSummary } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { reports, executiveSummaries, users, organizationBranding } from "@shared/schema";
+import type { User, InsertUser, Report, InsertReport, ExecutiveSummary, InsertExecutiveSummary, OrganizationBranding, UpdateOrganizationBranding } from "@shared/schema";
+import { eq, desc, sql } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -15,6 +15,9 @@ export interface IStorage {
 
   getExecutiveSummary(reportId: number): Promise<ExecutiveSummary | undefined>;
   createExecutiveSummary(summary: InsertExecutiveSummary): Promise<ExecutiveSummary>;
+
+  getBranding(tenantId: number): Promise<OrganizationBranding | undefined>;
+  upsertBranding(tenantId: number, data: UpdateOrganizationBranding): Promise<OrganizationBranding>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -60,6 +63,29 @@ export class DatabaseStorage implements IStorage {
   async createExecutiveSummary(summary: InsertExecutiveSummary): Promise<ExecutiveSummary> {
     const [created] = await db.insert(executiveSummaries).values(summary).returning();
     return created;
+  }
+
+  async getBranding(tenantId: number): Promise<OrganizationBranding | undefined> {
+    const [branding] = await db.select().from(organizationBranding).where(eq(organizationBranding.tenantId, tenantId));
+    return branding;
+  }
+
+  async upsertBranding(tenantId: number, data: UpdateOrganizationBranding): Promise<OrganizationBranding> {
+    const existing = await this.getBranding(tenantId);
+    if (existing) {
+      const [updated] = await db
+        .update(organizationBranding)
+        .set({ ...data, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(eq(organizationBranding.tenantId, tenantId))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db
+        .insert(organizationBranding)
+        .values({ tenantId, ...data })
+        .returning();
+      return created;
+    }
   }
 }
 

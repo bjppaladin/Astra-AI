@@ -316,6 +316,52 @@ export async function registerRoutes(
     }
   });
 
+  const logoUpload = multer({
+    storage: multer.diskStorage({
+      destination: "uploads/logos",
+      filename: (_req, file, cb) => {
+        const ext = file.originalname.split(".").pop();
+        cb(null, `logo-${Date.now()}.${ext}`);
+      },
+    }),
+    limits: { fileSize: 2 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const allowed = ["image/png", "image/jpeg", "image/svg+xml"];
+      cb(null, allowed.includes(file.mimetype));
+    },
+  });
+
+  app.get("/api/settings/branding", async (req, res) => {
+    try {
+      const tenantId = Number(req.query.tenantId) || 1;
+      const branding = await storage.getBranding(tenantId);
+      res.json(branding || null);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/settings/branding", async (req, res) => {
+    try {
+      const tenantId = Number(req.body.tenantId) || 1;
+      const { tenantId: _tid, ...data } = req.body;
+      const branding = await storage.upsertBranding(tenantId, data);
+      res.json(branding);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/settings/branding/logo", logoUpload.single("logo"), (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No file uploaded or invalid file type. Accepted: PNG, JPG, SVG (max 2MB)." });
+      const logoUrl = `/uploads/logos/${req.file.filename}`;
+      res.json({ logoUrl });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/upload/users", upload.single("file"), (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, real, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, real, timestamp, jsonb, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -75,5 +75,41 @@ export const insertMicrosoftTokenSchema = createInsertSchema(microsoftTokens).om
 
 export type MicrosoftToken = typeof microsoftTokens.$inferSelect;
 export type InsertMicrosoftToken = z.infer<typeof insertMicrosoftTokenSchema>;
+
+export const organizationBranding = pgTable("organization_branding", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().unique(),
+  companyName: varchar("company_name", { length: 255 }),
+  logoUrl: text("logo_url"),
+  logoWidthPx: integer("logo_width_px").default(200),
+  primaryColor: varchar("primary_color", { length: 7 }).default("#1a56db"),
+  secondaryColor: varchar("secondary_color", { length: 7 }).default("#6b7280"),
+  accentColor: varchar("accent_color", { length: 7 }).default("#059669"),
+  reportHeaderText: varchar("report_header_text", { length: 255 }),
+  reportFooterText: varchar("report_footer_text", { length: 255 }),
+  confidentialityNotice: text("confidentiality_notice").default("CONFIDENTIAL — For intended recipients only."),
+  contactName: varchar("contact_name", { length: 255 }),
+  contactEmail: varchar("contact_email", { length: 255 }),
+  contactPhone: varchar("contact_phone", { length: 50 }),
+  website: varchar("website", { length: 255 }),
+  showMeridianBadge: boolean("show_meridian_badge").default(true),
+  customCoverPage: boolean("custom_cover_page").default(false),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertOrganizationBrandingSchema = createInsertSchema(organizationBranding).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateOrganizationBrandingSchema = insertOrganizationBrandingSchema.partial().omit({
+  tenantId: true,
+});
+
+export type OrganizationBranding = typeof organizationBranding.$inferSelect;
+export type InsertOrganizationBranding = z.infer<typeof insertOrganizationBrandingSchema>;
+export type UpdateOrganizationBranding = z.infer<typeof updateOrganizationBrandingSchema>;
 
 export { pgTable };
