@@ -16,6 +16,7 @@ import {
   fetchActiveUserDetailReport,
   fetchSubscribedSkus,
 } from "./microsoft-graph";
+import { isAuthenticated } from "./replit_integrations/auth";
 
 const openrouter = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -241,7 +242,7 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
-  app.get("/api/microsoft/sync", async (req, res) => {
+  app.get("/api/microsoft/sync", isAuthenticated, async (req, res) => {
     const sessionId = req.session?.microsoftSessionId;
     if (!sessionId) return res.status(401).json({ error: "Not connected to Microsoft 365" });
 
@@ -263,7 +264,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/microsoft/report/active-users", async (req, res) => {
+  app.get("/api/microsoft/report/active-users", isAuthenticated, async (req, res) => {
     const sessionId = req.session?.microsoftSessionId;
     if (!sessionId) return res.status(401).json({ error: "Not connected to Microsoft 365" });
 
@@ -285,7 +286,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/microsoft/subscriptions", async (req, res) => {
+  app.get("/api/microsoft/subscriptions", isAuthenticated, async (req, res) => {
     const sessionId = req.session?.microsoftSessionId;
     if (!sessionId) return res.status(401).json({ error: "Not connected to Microsoft 365" });
 
@@ -305,7 +306,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/upload/users", upload.single("file"), (req, res) => {
+  app.post("/api/upload/users", isAuthenticated, upload.single("file"), (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
@@ -394,7 +395,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/upload/mailbox", upload.single("file"), (req, res) => {
+  app.post("/api/upload/mailbox", isAuthenticated, upload.single("file"), (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
@@ -458,7 +459,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/reports", async (_req, res) => {
+  app.get("/api/reports", isAuthenticated, async (_req, res) => {
     const reports = await storage.getReports();
     res.json(reports);
   });
@@ -469,7 +470,7 @@ export async function registerRoutes(
     res.json(report);
   });
 
-  app.post("/api/reports", async (req, res) => {
+  app.post("/api/reports", isAuthenticated, async (req, res) => {
     try {
       const report = await storage.createReport(req.body);
       res.status(201).json(report);
@@ -478,7 +479,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/reports/:id", async (req, res) => {
+  app.delete("/api/reports/:id", isAuthenticated, async (req, res) => {
     await storage.deleteReport(Number(req.params.id));
     res.status(204).send();
   });
@@ -489,7 +490,7 @@ export async function registerRoutes(
     res.json(summary);
   });
 
-  app.post("/api/reports/:id/summary", async (req, res) => {
+  app.post("/api/reports/:id/summary", isAuthenticated, async (req, res) => {
     try {
       const reportId = Number(req.params.id);
       const report = await storage.getReport(reportId);

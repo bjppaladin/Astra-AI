@@ -1,13 +1,9 @@
 import { db } from "./db";
-import { reports, executiveSummaries, users, loginHistory } from "@shared/schema";
-import type { User, InsertUser, Report, InsertReport, ExecutiveSummary, InsertExecutiveSummary, InsertLoginHistory, LoginHistory } from "@shared/schema";
+import { reports, executiveSummaries, loginHistory } from "@shared/schema";
+import type { Report, InsertReport, ExecutiveSummary, InsertExecutiveSummary, InsertLoginHistory, LoginHistory } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-
   getReports(): Promise<Report[]>;
   getReport(id: number): Promise<Report | undefined>;
   createReport(report: InsertReport): Promise<Report>;
@@ -22,21 +18,6 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
-  async getUser(id: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user;
-  }
-
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
-    return user;
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(insertUser).returning();
-    return user;
-  }
-
   async getReports(): Promise<Report[]> {
     return db.select().from(reports).orderBy(desc(reports.createdAt));
   }

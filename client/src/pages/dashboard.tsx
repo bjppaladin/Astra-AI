@@ -59,6 +59,7 @@ import {
   fetchNews,
 } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { LICENSES } from "@/lib/license-data";
 
@@ -171,6 +172,7 @@ const TUTORIAL_STEPS = [
 export default function Dashboard() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { user, logout } = useAuth();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -1160,6 +1162,20 @@ export default function Dashboard() {
           >
             <HelpCircle className="h-4 w-4" />
           </Button>
+          {user && (
+            <div className="flex items-center gap-2 ml-1 pl-3 border-l border-border/50">
+              {user.profileImageUrl && (
+                <img src={user.profileImageUrl} alt="" className="h-7 w-7 rounded-full" />
+              )}
+              <span className="text-sm font-medium hidden md:inline" data-testid="text-user-name">
+                {user.firstName || user.email || "User"}
+              </span>
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => logout()} data-testid="button-logout">
+                <LogOut className="h-3.5 w-3.5 mr-1" />
+                Sign Out
+              </Button>
+            </div>
+          )}
         </div>
       </header>
 

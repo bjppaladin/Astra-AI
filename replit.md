@@ -8,8 +8,9 @@ Astra is a full-stack web application for Microsoft 365 license and mailbox usag
 - **Backend**: Express.js + TypeScript
 - **Database**: PostgreSQL with Drizzle ORM
 - **AI**: OpenRouter (anthropic/claude-sonnet-4, temp 0.4, max_tokens 8192)
-- **Auth**: Multi-tenant Microsoft OAuth2 via `https://login.microsoftonline.com/common` — server-stored app credentials, users just click sign-in
-- **Sessions**: express-session + connect-pg-simple (PostgreSQL-backed), `trust proxy` enabled, `secure: true` always, `saveUninitialized: true`, explicit `session.save()` before returning auth URL
+- **App Auth**: Replit Auth (OpenID Connect) — users sign in with Google, GitHub, Apple, or email. Landing page shown for unauthenticated users.
+- **M365 Auth**: Multi-tenant Microsoft OAuth2 via `https://login.microsoftonline.com/common` — separate from app auth, used to connect tenant data
+- **Sessions**: Replit Auth manages sessions via connect-pg-simple (PostgreSQL `sessions` table). Microsoft OAuth data stored in same session via `microsoftSessionId`.
 - **Routing**: wouter (frontend), Express (backend API)
 - **Export**: xlsx for Excel, html2canvas + jsPDF for PDF/PNG (lazy-loaded)
 - **File Upload**: multer for CSV/XLSX file parsing
@@ -53,11 +54,14 @@ Astra is a full-stack web application for Microsoft 365 license and mailbox usag
 ```
 client/src/
   App.tsx                       — Route registration (/, /licenses, /report/:id/summary)
+  pages/landing.tsx             — Landing page for unauthenticated users (hero, features, sign-in CTA)
   pages/dashboard.tsx           — Main dashboard with KPIs, strategy selector, subscriptions panel, data table, OAuth + file upload
   pages/executive-summary.tsx   — AI summary viewer with streaming, PDF/PNG export
   pages/license-comparison.tsx  — License comparison guide (up to 3 side-by-side, URL param pre-selection)
   pages/not-found.tsx           — 404 page
+  hooks/use-auth.ts             — React hook for Replit Auth state (user, isAuthenticated, logout)
   lib/api.ts                    — API client functions (auth, upload, reports, sync, subscriptions)
+  lib/auth-utils.ts             — Auth error handling utilities
   lib/license-data.ts           — Comprehensive M365 license feature dataset (19 licenses, 8 feature categories)
   lib/queryClient.ts            — React Query client
   hooks/use-toast.ts            — Toast notification hook
@@ -73,6 +77,13 @@ shared/
 ```
 
 ## API Routes
+### Replit Auth
+- `GET /api/login` — Begin Replit Auth login flow
+- `GET /api/logout` — Logout and end session
+- `GET /api/callback` — OIDC callback handler
+- `GET /api/auth/user` — Get current authenticated user
+
+### Microsoft 365
 - `GET /api/auth/microsoft/status` — Check OAuth connection status (includes tenantId)
 - `GET /api/auth/microsoft/login` — Start OAuth flow → returns auth URL for consent screen
 - `GET /api/auth/microsoft/callback` — OAuth redirect handler (extracts tid from JWT)

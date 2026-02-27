@@ -1,11 +1,8 @@
 import express, { type Request, Response, NextFunction } from "express";
-import session from "express-session";
-import connectPgSimple from "connect-pg-simple";
+import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { pool } from "./db";
-import crypto from "crypto";
 
 const app = express();
 const httpServer = createServer(app);
@@ -22,29 +19,6 @@ declare module "express-session" {
     oauthState?: string;
   }
 }
-
-const PgSession = connectPgSimple(session);
-
-app.set("trust proxy", 1);
-
-app.use(
-  session({
-    store: new PgSession({
-      pool,
-      tableName: "user_sessions",
-      createTableIfMissing: true,
-    }),
-    secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex"),
-    resave: false,
-    saveUninitialized: true,
-    cookie: {
-      secure: true,
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000,
-      sameSite: "lax",
-    },
-  })
-);
 
 app.use(
   express.json({
@@ -94,6 +68,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  await setupAuth(app);
+  registerAuthRoutes(app);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
