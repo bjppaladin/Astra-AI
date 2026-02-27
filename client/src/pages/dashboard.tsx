@@ -81,6 +81,7 @@ export default function Dashboard() {
     configured: boolean;
     connected: boolean;
     user?: { displayName: string; email: string };
+    tenantId?: string;
   }>({ configured: false, connected: false });
   const [msLoading, setMsLoading] = useState(false);
 
@@ -536,10 +537,13 @@ export default function Dashboard() {
                 {msAuth.connected ? (
                   <div className="space-y-2">
                     <div className="text-xs bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-md p-2 flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-blue-600" />
-                      <div>
+                      <CheckCircle2 className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                      <div className="min-w-0">
                         <div className="font-medium text-blue-800 dark:text-blue-200">{msAuth.user?.displayName}</div>
-                        <div className="text-blue-600 dark:text-blue-400">{msAuth.user?.email}</div>
+                        <div className="text-blue-600 dark:text-blue-400 truncate">{msAuth.user?.email}</div>
+                        {msAuth.tenantId && (
+                          <div className="text-blue-500 dark:text-blue-500 truncate">Tenant: {msAuth.tenantId}</div>
+                        )}
                       </div>
                     </div>
                     <div className="flex gap-2">

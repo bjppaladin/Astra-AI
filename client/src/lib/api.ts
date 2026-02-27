@@ -4,6 +4,7 @@ export async function getMicrosoftAuthStatus(): Promise<{
   configured: boolean;
   connected: boolean;
   user?: { displayName: string; email: string };
+  tenantId?: string;
 }> {
   const res = await fetch("/api/auth/microsoft/status");
   if (!res.ok) throw new Error("Failed to check auth status");

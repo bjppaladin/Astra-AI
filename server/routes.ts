@@ -13,6 +13,7 @@ import {
   refreshAccessToken,
   getCurrentUser,
   fetchM365Data,
+  fetchActiveUserDetailReport,
 } from "./microsoft-graph";
 
 const openrouter = new OpenAI({
@@ -148,6 +149,7 @@ const tokenStore = new Map<string, {
   accessToken: string;
   refreshToken?: string;
   expiresAt: Date;
+  tenantId: string;
   userName?: string;
   userEmail?: string;
 }>();
@@ -205,6 +207,7 @@ export async function registerRoutes(
       configured,
       connected: true,
       user: { displayName: stored?.userName, email: stored?.userEmail },
+      tenantId: stored?.tenantId,
     });
   });
 
@@ -247,6 +250,7 @@ export async function registerRoutes(
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
         expiresAt: tokens.expiresAt,
+        tenantId: tokens.tenantId,
         userName: user.displayName,
         userEmail: user.mail,
       });
@@ -275,12 +279,40 @@ export async function registerRoutes(
     const token = await getValidToken(sessionId);
     if (!token) return res.status(401).json({ error: "Session expired. Please reconnect." });
 
+    const stored = tokenStore.get(sessionId);
     try {
       const users = await fetchM365Data(token);
-      res.json({ users, source: "microsoft365", syncedAt: new Date().toISOString() });
+      res.json({
+        users,
+        source: "microsoft365",
+        tenantId: stored?.tenantId,
+        syncedAt: new Date().toISOString(),
+      });
     } catch (err: any) {
       console.error("M365 sync error:", err.message);
       res.status(500).json({ error: `Failed to sync: ${err.message}` });
+    }
+  });
+
+  app.get("/api/microsoft/report/active-users", async (req, res) => {
+    const sessionId = req.session?.microsoftSessionId;
+    if (!sessionId) return res.status(401).json({ error: "Not connected to Microsoft 365" });
+
+    const token = await getValidToken(sessionId);
+    if (!token) return res.status(401).json({ error: "Session expired. Please reconnect." });
+
+    const stored = tokenStore.get(sessionId);
+    try {
+      const report = await fetchActiveUserDetailReport(token);
+      res.json({
+        report,
+        tenantId: stored?.tenantId,
+        totalUsers: report.length,
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error("Report error:", err.message);
+      res.status(500).json({ error: `Failed to get report: ${err.message}` });
     }
   });
 

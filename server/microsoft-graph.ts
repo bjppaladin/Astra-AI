@@ -31,9 +31,19 @@ export function isOAuthConfigured(): boolean {
 
 export function getAuthUrl(redirectUri: string, state: string): string {
   const scope = SCOPES.join(" ");
-  const tenantId = getTenantId();
   const clientId = getClientId();
-  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${state}&response_mode=query&prompt=consent`;
+  return `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${state}&response_mode=query&prompt=consent`;
+}
+
+function decodeJwtPayload(token: string): Record<string, any> {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return {};
+    const payload = Buffer.from(parts[1], "base64url").toString("utf-8");
+    return JSON.parse(payload);
+  } catch {
+    return {};
+  }
 }
 
 export async function exchangeCodeForTokens(
@@ -43,6 +53,7 @@ export async function exchangeCodeForTokens(
   accessToken: string;
   refreshToken: string | undefined;
   expiresAt: Date;
+  tenantId: string;
 }> {
   const params = new URLSearchParams({
     client_id: getClientId(),
@@ -54,7 +65,7 @@ export async function exchangeCodeForTokens(
   });
 
   const response = await fetch(
-    `https://login.microsoftonline.com/${getTenantId()}/oauth2/v2.0/token`,
+    `https://login.microsoftonline.com/common/oauth2/v2.0/token`,
     { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() }
   );
 
@@ -64,10 +75,21 @@ export async function exchangeCodeForTokens(
   }
 
   const data = await response.json();
+  const claims = decodeJwtPayload(data.access_token);
+  const tenantId = claims.tid || "unknown";
+
+  if (claims.aud && claims.aud !== "https://graph.microsoft.com" && claims.aud !== "00000003-0000-0000-c000-000000000000") {
+    throw new Error(`Unexpected token audience: ${claims.aud}`);
+  }
+  if (claims.iss && !claims.iss.startsWith("https://sts.windows.net/") && !claims.iss.startsWith("https://login.microsoftonline.com/")) {
+    throw new Error(`Unexpected token issuer: ${claims.iss}`);
+  }
+
   return {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresAt: new Date(Date.now() + data.expires_in * 1000),
+    tenantId,
   };
 }
 
@@ -85,7 +107,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   });
 
   const response = await fetch(
-    `https://login.microsoftonline.com/${getTenantId()}/oauth2/v2.0/token`,
+    `https://login.microsoftonline.com/common/oauth2/v2.0/token`,
     { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() }
   );
 
@@ -223,6 +245,34 @@ export async function fetchMailboxUsage(accessToken: string): Promise<Map<string
     const maxGB = quotaBytes > 0 ? quotaBytes / (1024 * 1024 * 1024) : 50;
     result.set(upn.toLowerCase(), { usageGB: Math.round(usageGB * 10) / 10, maxGB: Math.round(maxGB) });
   }
+  return result;
+}
+
+export async function fetchActiveUserDetailReport(accessToken: string): Promise<any[]> {
+  let csvData: string;
+  try {
+    csvData = await graphFetch(accessToken, `${GRAPH_BETA}/reports/getOffice365ActiveUserDetail(period='D30')?$format=text/csv`, true);
+  } catch (err: any) {
+    throw new Error(`Failed to fetch Active User Detail report: ${err.message}`);
+  }
+
+  const lines = (csvData as string).split("\n").filter((l: string) => l.trim());
+  if (lines.length < 2) return [];
+
+  const headers = parseCSVLine(lines[0]);
+  const result: any[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const fields = parseCSVLine(lines[i]);
+    if (fields.length < headers.length) continue;
+
+    const row: Record<string, string> = {};
+    for (let j = 0; j < headers.length; j++) {
+      row[headers[j]] = fields[j] || "";
+    }
+    result.push(row);
+  }
+
   return result;
 }
 

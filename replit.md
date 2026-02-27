@@ -1,30 +1,40 @@
 # M365 License & Usage Insights
 
 ## Overview
-A full-stack web application for Microsoft 365 license and mailbox usage analysis. Users can either sign in via Microsoft OAuth consent screen (providing their own Azure AD app credentials) or upload CSV/XLSX exports from the M365 Admin Center. The app merges data, provides licensing optimization strategies, and generates AI-powered executive summaries for C-Suite presentations.
+A full-stack multi-tenant web application for Microsoft 365 license and mailbox usage analysis. Users from any M365 organization sign in via the Microsoft OAuth consent screen (one-click "Sign in with Microsoft" — no Azure setup required for end users). Alternatively, users can upload CSV/XLSX exports. The app provides licensing optimization strategies and generates AI-powered executive summaries for C-Suite presentations.
 
 ## Architecture
 - **Frontend**: React + TypeScript + Vite + Tailwind CSS v4 + shadcn/ui components
 - **Backend**: Express.js + TypeScript
 - **Database**: PostgreSQL with Drizzle ORM
 - **AI**: OpenRouter (anthropic/claude-sonnet-4 for executive summaries)
-- **Auth**: Microsoft OAuth2 consent flow (user-provided Azure AD credentials, session-scoped)
+- **Auth**: Multi-tenant Microsoft OAuth2 via `https://login.microsoftonline.com/common` — server-stored app credentials, users just click sign-in
 - **Sessions**: express-session + connect-pg-simple (PostgreSQL-backed)
 - **Routing**: wouter (frontend), Express (backend API)
 - **Export**: xlsx library for Excel exports
 - **File Upload**: multer for CSV/XLSX file parsing
 
+## Multi-Tenant OAuth Flow
+1. App is registered once in Azure AD as a multi-tenant app (Client ID, Secret stored as server secrets)
+2. Users click "Sign in with Microsoft" → redirected to Microsoft consent screen
+3. Admin can "Consent on behalf of your organization" for required scopes
+4. After consent, the `tid` (Tenant ID) is extracted from the JWT access token claims
+5. Each user's access/refresh tokens + tenant ID are stored in-memory per session
+6. Tenant ID is returned with all API responses to distinguish data between organizations
+7. Scopes requested: `User.Read`, `User.Read.All`, `Reports.Read.All`, `Organization.Read.All`, `offline_access`
+
 ## Key Features
-1. **Microsoft OAuth Sign-In** — Users enter their own Azure AD app credentials (Client ID, Secret, Tenant ID), then go through the Microsoft consent screen to authorize. No server-stored credentials needed.
-2. **CSV/XLSX Upload** — Alternative method: upload Active Users and Mailbox Usage reports exported from M365 Admin Center.
-3. **Graph API Sync** — After OAuth, pulls licensed users and mailbox usage data via Microsoft Graph API.
-4. **Smart Parsing** — Automatic column detection, preamble-row skipping, and license-to-cost mapping for 30+ M365 SKUs.
-5. **Data Merging** — Joins user and mailbox data on UPN for a unified view.
-6. **Dashboard** — Combined user directory with licenses + mailbox usage (demo mode with sample data).
-7. **Strategy Selector** — Current / Security / Cost / Balanced / Custom optimization.
-8. **Billing Commitment** — Monthly vs Annual cost comparison (0.85 multiplier for annual).
-9. **XLSX Export** — Download combined report as Excel.
-10. **Executive Summary** — AI-generated vCIO analysis streamed in real-time via SSE.
+1. **Microsoft OAuth Sign-In** — One-click "Sign in with Microsoft" for any M365 tenant. No Azure setup for end users.
+2. **CSV/XLSX Upload** — Alternative: upload Active Users and Mailbox Usage reports from M365 Admin Center.
+3. **Graph API Sync** — Pulls licensed users, SKU mappings, and mailbox usage via Microsoft Graph API.
+4. **Active User Detail Report** — Dedicated endpoint for Office 365 Active User Detail report (30-day).
+5. **Smart Parsing** — Automatic column detection, preamble-row skipping, and license-to-cost mapping for 30+ M365 SKUs.
+6. **Data Merging** — Joins user and mailbox data on UPN for a unified view.
+7. **Dashboard** — Combined user directory with licenses + mailbox usage (demo mode with sample data).
+8. **Strategy Selector** — Current / Security / Cost / Balanced / Custom optimization.
+9. **Billing Commitment** — Monthly vs Annual cost comparison (0.85 multiplier for annual).
+10. **XLSX Export** — Download combined report as Excel.
+11. **Executive Summary** — AI-generated vCIO analysis streamed in real-time via SSE.
 
 ## Data Model (shared/schema.ts)
 - `users` — Auth table (placeholder)
@@ -41,7 +51,7 @@ client/src/
 server/
   db.ts                       — Database connection (Drizzle + pg)
   index.ts                    — Express app setup with session middleware
-  microsoft-graph.ts          — Microsoft Graph API client (OAuth, user fetch, mailbox reports)
+  microsoft-graph.ts          — Microsoft Graph API client (OAuth, user fetch, mailbox reports, active user report)
   routes.ts                   — API routes (auth, file upload, reports, summaries)
   storage.ts                  — Database storage interface
 shared/
@@ -49,11 +59,12 @@ shared/
 ```
 
 ## API Routes
-- `GET /api/auth/microsoft/status` — Check OAuth connection status
-- `POST /api/auth/microsoft/login` — Start OAuth flow (accepts clientId, clientSecret, tenantId in body)
-- `GET /api/auth/microsoft/callback` — OAuth redirect handler
+- `GET /api/auth/microsoft/status` — Check OAuth connection status (includes tenantId)
+- `GET /api/auth/microsoft/login` — Start OAuth flow → returns auth URL for consent screen
+- `GET /api/auth/microsoft/callback` — OAuth redirect handler (extracts tid from JWT)
 - `POST /api/auth/microsoft/disconnect` — Clear OAuth session
-- `GET /api/microsoft/sync` — Fetch users + mailbox data via Graph API
+- `GET /api/microsoft/sync` — Fetch users + mailbox data via Graph API (includes tenantId)
+- `GET /api/microsoft/report/active-users` — Office 365 Active User Detail report (30-day)
 - `POST /api/upload/users` — Parse uploaded Active Users CSV/XLSX
 - `POST /api/upload/mailbox` — Parse uploaded Mailbox Usage CSV/XLSX
 - `GET /api/reports` — List saved reports
@@ -64,13 +75,16 @@ shared/
 
 ## Environment Variables
 - `DATABASE_URL` — PostgreSQL connection string
+- `MICROSOFT_CLIENT_ID` — Azure AD Application (Client) ID
+- `MICROSOFT_CLIENT_SECRET` — Azure AD Client Secret
+- `MICROSOFT_TENANT_ID` — Azure AD Tenant ID (defaults to "common" for multi-tenant)
 - `OPENROUTER_API_KEY` — OpenRouter API key for AI summaries
 
 ## How to Use
 ### Option A: Microsoft OAuth (Recommended)
 1. Click "Import Data" in the app header
-2. Enter your Azure AD Client ID, Client Secret, and Tenant ID
-3. Click "Sign in with Microsoft" → go through the consent screen
+2. Click "Sign in with Microsoft"
+3. Go through the Microsoft consent screen (admin can consent for the whole org)
 4. Click "Sync Data" to pull users, licenses, and mailbox usage
 
 ### Option B: File Upload
