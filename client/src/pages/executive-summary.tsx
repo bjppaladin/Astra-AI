@@ -223,18 +223,57 @@ export default function ExecutiveSummaryPage() {
   const captureContent = useCallback(async () => {
     const el = exportRef.current;
     if (!el) throw new Error("Content not available for export");
+
+    const clone = el.cloneNode(true) as HTMLElement;
+    clone.style.position = "absolute";
+    clone.style.left = "-9999px";
+    clone.style.top = "0";
+    clone.style.width = el.scrollWidth + "px";
+    clone.style.backgroundColor = "#ffffff";
+    clone.style.color = "#1a1a2e";
+
+    const resolveColors = (node: HTMLElement) => {
+      const computed = window.getComputedStyle(node);
+      const props = ["color", "background-color", "border-color", "border-top-color", "border-bottom-color", "border-left-color", "border-right-color"] as const;
+      for (const prop of props) {
+        const val = computed.getPropertyValue(prop);
+        if (val && (val.includes("oklab") || val.includes("oklch") || val.includes("color-mix"))) {
+          const canvas = document.createElement("canvas");
+          canvas.width = 1;
+          canvas.height = 1;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.fillStyle = val;
+            ctx.fillRect(0, 0, 1, 1);
+            const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+            node.style.setProperty(prop, a < 255 ? `rgba(${r},${g},${b},${(a / 255).toFixed(2)})` : `rgb(${r},${g},${b})`);
+          }
+        }
+      }
+      for (const child of Array.from(node.children)) {
+        if (child instanceof HTMLElement) resolveColors(child);
+      }
+    };
+
+    document.body.appendChild(clone);
+    resolveColors(clone);
+
     const html2canvas = (await import("html2canvas")).default;
-    const canvas = await html2canvas(el, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: "#ffffff",
-      logging: false,
-      width: el.scrollWidth,
-      height: el.scrollHeight,
-      windowWidth: el.scrollWidth,
-      windowHeight: el.scrollHeight,
-    });
-    return canvas;
+    try {
+      const canvas = await html2canvas(clone, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        width: el.scrollWidth,
+        height: el.scrollHeight,
+        windowWidth: el.scrollWidth,
+        windowHeight: el.scrollHeight,
+      });
+      return canvas;
+    } finally {
+      document.body.removeChild(clone);
+    }
   }, []);
 
   const handleExportPDF = useCallback(async () => {
