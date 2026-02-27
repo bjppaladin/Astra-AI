@@ -25,6 +25,7 @@ Astra is a full-stack web application for Microsoft 365 license and mailbox usag
 8. **Usage-Aware Strategy Engine** — Current / Security / Cost / Balanced / Custom optimization. Per-user analysis based on mailbox usage ratios, department classification, license tier, and add-on relevance. Each recommendation includes specific reasoning. Costs recomputed from final license set (not deltas). Security-dept awareness (IT, Engineering, Compliance, Security, InfoSec). Custom mode has grouped rules (Upgrades, Downgrades & Savings) with usage threshold slider. Strategy cards preview impact (users affected, net cost delta, upgrade/downgrade counts).
 9. **Billing Commitment** — Monthly vs Annual cost comparison (0.85 multiplier for annual).
 10. **XLSX Export** — Download combined report as Excel.
+13. **License Comparison Guide** — Dedicated `/licenses` page with side-by-side feature comparison for up to 3 M365 licenses. Comprehensive feature dataset covering Core Apps, Email, Communication, Security, Compliance, Storage, Automation, and AI categories. License badges in the dashboard are clickable and navigate to the comparison page with that license pre-selected. Consistent navigation across all pages.
 11. **Executive Briefing** — Comprehensive AI-generated vCIO analysis (8 sections: executive summary, current state assessment, strategy deep-dives, risk matrix with severity ratings, implementation roadmap, financial summary, next steps). Pre-computes dept breakdowns, license distribution, mailbox analytics, and risk signals before sending to AI. Uses system + user message prompting with temperature 0.4. Polished line-by-line markdown renderer with styled tables (auto-detected headers, color-coded deltas), blockquotes, HR rules, emoji support. Real-time word count + elapsed time during SSE streaming. Print-optimized CSS.
 12. **Export to PDF/PNG** — Export executive briefing as a multi-page PDF (A4) or full-resolution PNG image. Uses html2canvas for rendering + jsPDF for PDF pagination. Lazy-loaded via dynamic imports.
 
@@ -40,7 +41,9 @@ Astra is a full-stack web application for Microsoft 365 license and mailbox usag
 client/src/
   pages/dashboard.tsx         — Main dashboard with KPIs, strategy selector, data table, OAuth + file upload
   pages/executive-summary.tsx — AI summary viewer with streaming
+  pages/license-comparison.tsx— License comparison guide (up to 3 side-by-side)
   lib/api.ts                  — API client functions (auth, upload, reports, sync)
+  lib/license-data.ts         — Comprehensive M365 license feature dataset (all SKUs)
 server/
   db.ts                       — Database connection (Drizzle + pg)
   index.ts                    — Express app setup with session middleware

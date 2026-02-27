@@ -6,11 +6,13 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import ExecutiveSummaryPage from "@/pages/executive-summary";
+import LicenseComparisonPage from "@/pages/license-comparison";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard}/>
+      <Route path="/licenses" component={LicenseComparisonPage}/>
       <Route path="/report/:id/summary" component={ExecutiveSummaryPage}/>
       <Route component={NotFound} />
     </Switch>

@@ -577,11 +577,17 @@ export default function Dashboard() {
     <div className="min-h-screen bg-background flex flex-col font-sans text-foreground">
       {/* Top Navigation */}
       <header className="sticky top-0 z-10 bg-card/80 backdrop-blur-md border-b border-border px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold">
-            A
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")} data-testid="link-home">
+            <div className="h-8 w-8 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold">
+              A
+            </div>
+            <h1 className="text-xl font-semibold tracking-tight">Astra</h1>
           </div>
-          <h1 className="text-xl font-semibold tracking-tight">Astra</h1>
+          <nav className="hidden sm:flex items-center gap-1 ml-2">
+            <Button variant="ghost" size="sm" className="text-foreground font-medium bg-muted/50" data-testid="nav-dashboard">Dashboard</Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" onClick={() => navigate("/licenses")} data-testid="nav-licenses">License Guide</Button>
+          </nav>
         </div>
         <div className="flex items-center gap-3">
           {dataSource === "mock" && data.length > 0 && (
@@ -1343,7 +1349,9 @@ export default function Dashboard() {
                                     return (
                                       <Badge
                                         key={`new-${i}`}
-                                        className={`text-xs w-fit ${isNew ? 'bg-primary/20 text-primary border-primary/20' : isSuite ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' : 'bg-secondary/50 border-border/40'}`}
+                                        className={`text-xs w-fit cursor-pointer hover:opacity-80 transition-opacity ${isNew ? 'bg-primary/20 text-primary border-primary/20' : isSuite ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' : 'bg-secondary/50 border-border/40'}`}
+                                        onClick={() => navigate(`/licenses?compare=${encodeURIComponent(license)}`)}
+                                        data-testid={`badge-license-new-${i}`}
                                       >
                                         {license}
                                       </Badge>
@@ -1369,7 +1377,9 @@ export default function Dashboard() {
                                     <Badge
                                       key={i}
                                       variant="outline"
-                                      className={`text-xs w-fit ${isSuite ? 'border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-300' : 'border-border/60'}`}
+                                      className={`text-xs w-fit cursor-pointer hover:opacity-80 transition-opacity ${isSuite ? 'border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-300' : 'border-border/60'}`}
+                                      onClick={() => navigate(`/licenses?compare=${encodeURIComponent(license)}`)}
+                                      data-testid={`badge-license-${i}`}
                                     >
                                       {license}
                                     </Badge>

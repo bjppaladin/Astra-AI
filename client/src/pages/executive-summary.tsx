@@ -452,9 +452,19 @@ export default function ExecutiveSummaryPage() {
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20 flex flex-col font-sans text-foreground">
       <header className="sticky top-0 z-10 bg-card/90 backdrop-blur-lg border-b border-border/50 px-6 py-3 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/")} data-testid="button-back" className="gap-2">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")} data-testid="link-home">
+            <div className="h-7 w-7 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold text-sm">
+              A
+            </div>
+          </div>
+          <nav className="hidden sm:flex items-center gap-1">
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" onClick={() => navigate("/")} data-testid="nav-dashboard">Dashboard</Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" onClick={() => navigate("/licenses")} data-testid="nav-licenses">License Guide</Button>
+          </nav>
+          <span className="text-border hidden sm:inline">|</span>
+          <Button variant="ghost" size="sm" onClick={() => navigate("/")} data-testid="button-back" className="gap-2 sm:hidden">
             <ArrowLeft className="h-4 w-4" />
-            Back to Dashboard
+            Back
           </Button>
           {isGenerating && (
             <div className="flex items-center gap-3 ml-4 text-xs text-muted-foreground">
