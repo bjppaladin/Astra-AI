@@ -1,7 +1,7 @@
 # M365 License & Usage Insights
 
 ## Overview
-A full-stack multi-tenant web application for Microsoft 365 license and mailbox usage analysis. Users from any M365 organization sign in via the Microsoft OAuth consent screen (one-click "Sign in with Microsoft" — no Azure setup required for end users). Alternatively, users can upload CSV/XLSX exports. The app provides licensing optimization strategies and generates AI-powered executive summaries for C-Suite presentations.
+A full-stack web application for Microsoft 365 license and mailbox usage analysis. Users from any M365 organization sign in via the Microsoft OAuth consent screen (one-click "Sign in with Microsoft" — no Azure setup required for end users). Alternatively, users can upload CSV/XLSX exports from the M365 Admin Center. The app merges data, provides licensing optimization strategies, and generates AI-powered executive summaries for C-Suite presentations.
 
 ## Architecture
 - **Frontend**: React + TypeScript + Vite + Tailwind CSS v4 + shadcn/ui components
@@ -13,15 +13,6 @@ A full-stack multi-tenant web application for Microsoft 365 license and mailbox 
 - **Routing**: wouter (frontend), Express (backend API)
 - **Export**: xlsx library for Excel exports
 - **File Upload**: multer for CSV/XLSX file parsing
-
-## Multi-Tenant OAuth Flow
-1. App is registered once in Azure AD as a multi-tenant app (Client ID, Secret stored as server secrets)
-2. Users click "Sign in with Microsoft" → redirected to Microsoft consent screen
-3. Admin can "Consent on behalf of your organization" for required scopes
-4. After consent, the `tid` (Tenant ID) is extracted from the JWT access token claims
-5. Each user's access/refresh tokens + tenant ID are stored in-memory per session
-6. Tenant ID is returned with all API responses to distinguish data between organizations
-7. Scopes requested: `User.Read`, `User.Read.All`, `Reports.Read.All`, `Organization.Read.All`, `offline_access`
 
 ## Key Features
 1. **Microsoft OAuth Sign-In** — One-click "Sign in with Microsoft" for any M365 tenant. No Azure setup for end users.
@@ -40,6 +31,7 @@ A full-stack multi-tenant web application for Microsoft 365 license and mailbox 
 - `users` — Auth table (placeholder)
 - `reports` — Saved report snapshots (strategy, commitment, user data as JSONB)
 - `executiveSummaries` — AI-generated summaries linked to reports
+- `microsoftTokens` — Microsoft OAuth tokens (session-scoped)
 - `user_sessions` — Session store (auto-created by connect-pg-simple)
 
 ## File Structure
@@ -77,7 +69,7 @@ shared/
 - `DATABASE_URL` — PostgreSQL connection string
 - `MICROSOFT_CLIENT_ID` — Azure AD Application (Client) ID
 - `MICROSOFT_CLIENT_SECRET` — Azure AD Client Secret
-- `MICROSOFT_TENANT_ID` — Azure AD Tenant ID (defaults to "common" for multi-tenant)
+- `MICROSOFT_TENANT_ID` — Azure AD Tenant ID (unused in code, hardcoded to "common")
 - `OPENROUTER_API_KEY` — OpenRouter API key for AI summaries
 
 ## How to Use
