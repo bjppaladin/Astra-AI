@@ -1050,6 +1050,9 @@ export default function Dashboard() {
           </div>
         </Card>
       </main>
+      <footer className="py-4 text-center text-xs text-muted-foreground border-t border-border/30">
+        &copy; 2026 Cavaridge, LLC. All rights reserved.
+      </footer>
     </div>
   );
 }
