@@ -167,15 +167,33 @@ export default function Dashboard() {
   const [showSubscriptions, setShowSubscriptions] = useState(false);
   const [subsLoading, setSubsLoading] = useState(false);
 
-  const [customRules, setCustomRules] = useState({
-    upgradeUnderprovisioned: true,
-    upgradeToE5Security: false,
-    upgradeBasicToStandard: true,
-    upgradeToBizPremiumSecurity: false,
-    downgradeUnderutilizedE5: true,
-    downgradeOverprovisionedE3: false,
-    downgradeUnderutilizedBizPremium: true,
-    downgradeBizStandardToBasic: false,
+  type RuleScope = "all" | "security" | "custom";
+  type ScopedRule = { enabled: boolean; scope: RuleScope; departments: string[]; threshold?: number };
+  type CustomRulesState = {
+    upgradeUnderprovisioned: ScopedRule;
+    upgradeToE5: ScopedRule;
+    upgradeBasicToStandard: ScopedRule;
+    upgradeToBizPremium: ScopedRule;
+    downgradeUnderutilizedE5: ScopedRule;
+    downgradeOverprovisionedE3: ScopedRule;
+    downgradeUnderutilizedBizPremium: ScopedRule;
+    downgradeBizStandardToBasic: ScopedRule;
+    removeUnusedAddons: boolean;
+    consolidateOverlap: boolean;
+    removeRedundantAddons: boolean;
+    addCopilotPowerUsers: boolean;
+    usageThreshold: number;
+  };
+
+  const [customRules, setCustomRules] = useState<CustomRulesState>({
+    upgradeUnderprovisioned: { enabled: true, scope: "all", departments: [] },
+    upgradeToE5: { enabled: false, scope: "security", departments: [] },
+    upgradeBasicToStandard: { enabled: true, scope: "all", departments: [] },
+    upgradeToBizPremium: { enabled: false, scope: "security", departments: [] },
+    downgradeUnderutilizedE5: { enabled: true, scope: "all", departments: [], threshold: undefined },
+    downgradeOverprovisionedE3: { enabled: false, scope: "all", departments: [], threshold: undefined },
+    downgradeUnderutilizedBizPremium: { enabled: true, scope: "all", departments: [], threshold: undefined },
+    downgradeBizStandardToBasic: { enabled: false, scope: "all", departments: [], threshold: undefined },
     removeUnusedAddons: true,
     consolidateOverlap: true,
     removeRedundantAddons: true,
@@ -434,46 +452,54 @@ export default function Dashboard() {
     return licenses.reduce((sum, l) => sum + (LICENSE_COSTS[l] ?? 0), 0);
   };
 
-  const analyzeUser = useCallback((user: UserRow, strat: Strategy, rules: typeof customRules): UserRec => {
+  const scopeMatchesDept = (rule: ScopedRule, dept: string): boolean => {
+    if (rule.scope === "all") return true;
+    if (rule.scope === "security") return SECURITY_DEPTS.has(dept);
+    return rule.departments.includes(dept);
+  };
+
+  const analyzeUser = useCallback((user: UserRow, strat: Strategy, rules: CustomRulesState): UserRec => {
     let newLicenses = [...user.licenses];
     const reasons: string[] = [];
     const hasMailboxData = user.maxGB > 0;
     const usageRatio = hasMailboxData ? (user.usageGB / user.maxGB) * 100 : -1;
     const isSecurityDept = SECURITY_DEPTS.has(user.department);
-    const threshold = rules.usageThreshold;
+    const globalThreshold = rules.usageThreshold;
 
-    const getRulesForStrategy = (): typeof customRules => {
+    const getRulesForStrategy = (): CustomRulesState => {
       if (strat === "custom") return rules;
+      const s = (enabled: boolean, scope: RuleScope = "all"): ScopedRule => ({ enabled, scope, departments: [] });
       if (strat === "security") return {
-        upgradeUnderprovisioned: true, upgradeToE5Security: true,
-        upgradeBasicToStandard: false, upgradeToBizPremiumSecurity: true,
-        downgradeUnderutilizedE5: false, downgradeOverprovisionedE3: false,
-        downgradeUnderutilizedBizPremium: false, downgradeBizStandardToBasic: false,
+        upgradeUnderprovisioned: s(true), upgradeToE5: s(true, "security"),
+        upgradeBasicToStandard: s(false), upgradeToBizPremium: s(true, "security"),
+        downgradeUnderutilizedE5: s(false), downgradeOverprovisionedE3: s(false),
+        downgradeUnderutilizedBizPremium: s(false), downgradeBizStandardToBasic: s(false),
         removeUnusedAddons: false, consolidateOverlap: true,
         removeRedundantAddons: true, addCopilotPowerUsers: true, usageThreshold: 10,
       };
       if (strat === "cost") return {
-        upgradeUnderprovisioned: false, upgradeToE5Security: false,
-        upgradeBasicToStandard: false, upgradeToBizPremiumSecurity: false,
-        downgradeUnderutilizedE5: true, downgradeOverprovisionedE3: true,
-        downgradeUnderutilizedBizPremium: true, downgradeBizStandardToBasic: true,
+        upgradeUnderprovisioned: s(false), upgradeToE5: s(false),
+        upgradeBasicToStandard: s(false), upgradeToBizPremium: s(false),
+        downgradeUnderutilizedE5: s(true), downgradeOverprovisionedE3: s(true),
+        downgradeUnderutilizedBizPremium: s(true), downgradeBizStandardToBasic: s(true),
         removeUnusedAddons: true, consolidateOverlap: true,
         removeRedundantAddons: true, addCopilotPowerUsers: false, usageThreshold: 30,
       };
       return {
-        upgradeUnderprovisioned: true, upgradeToE5Security: false,
-        upgradeBasicToStandard: true, upgradeToBizPremiumSecurity: false,
-        downgradeUnderutilizedE5: true, downgradeOverprovisionedE3: false,
-        downgradeUnderutilizedBizPremium: true, downgradeBizStandardToBasic: false,
+        upgradeUnderprovisioned: s(true), upgradeToE5: s(false),
+        upgradeBasicToStandard: s(true), upgradeToBizPremium: s(false),
+        downgradeUnderutilizedE5: s(true), downgradeOverprovisionedE3: s(false),
+        downgradeUnderutilizedBizPremium: s(true), downgradeBizStandardToBasic: s(false),
         removeUnusedAddons: true, consolidateOverlap: true,
         removeRedundantAddons: true, addCopilotPowerUsers: false, usageThreshold: 20,
       };
     };
 
     const r = getRulesForStrategy();
-    const effThreshold = strat === "custom" ? threshold : r.usageThreshold;
+    const effThreshold = strat === "custom" ? globalThreshold : r.usageThreshold;
+    const ruleThreshold = (rule: ScopedRule) => rule.threshold ?? effThreshold;
 
-    if (r.upgradeUnderprovisioned) {
+    if (r.upgradeUnderprovisioned.enabled && scopeMatchesDept(r.upgradeUnderprovisioned, user.department)) {
       if (newLicenses.includes("Office 365 E1") && hasMailboxData && usageRatio > 50) {
         newLicenses = newLicenses.filter(l => l !== "Office 365 E1");
         newLicenses.push("Microsoft 365 E3");
@@ -492,7 +518,7 @@ export default function Dashboard() {
       }
     }
 
-    if (r.upgradeBasicToStandard) {
+    if (r.upgradeBasicToStandard.enabled && scopeMatchesDept(r.upgradeBasicToStandard, user.department)) {
       if (newLicenses.includes("Microsoft 365 Business Basic") && hasMailboxData && usageRatio > 50) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Basic");
         newLicenses.push("Microsoft 365 Business Standard");
@@ -500,57 +526,62 @@ export default function Dashboard() {
       }
     }
 
-    if (r.upgradeToE5Security) {
-      if (newLicenses.includes("Microsoft 365 E3") && isSecurityDept) {
+    if (r.upgradeToE5.enabled && scopeMatchesDept(r.upgradeToE5, user.department)) {
+      if (newLicenses.includes("Microsoft 365 E3")) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
         newLicenses.push("Microsoft 365 E5");
-        reasons.push(`${user.department} handles sensitive data/systems — E5 adds Defender for Office 365 P2, Cloud App Security, auto-investigation & response, and eDiscovery Premium. Critical for security-facing roles.`);
+        reasons.push(`${user.department} ${isSecurityDept ? "handles sensitive data/systems" : "selected for E5 upgrade"} — E5 adds Defender for Office 365 P2, Cloud App Security, auto-investigation & response, and eDiscovery Premium. $21/user/mo uplift.`);
       }
     }
 
-    if (r.upgradeToBizPremiumSecurity) {
-      if (newLicenses.includes("Microsoft 365 Business Standard") && isSecurityDept) {
+    if (r.upgradeToBizPremium.enabled && scopeMatchesDept(r.upgradeToBizPremium, user.department)) {
+      if (newLicenses.includes("Microsoft 365 Business Standard")) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Standard");
         newLicenses.push("Microsoft 365 Business Premium");
-        reasons.push(`${user.department} requires device management and threat protection — Business Premium adds Intune MDM, Defender for Business, and Conditional Access policies. Strengthens zero-trust posture at $9.50/user/mo uplift.`);
+        reasons.push(`${user.department} ${isSecurityDept ? "requires" : "selected for"} device management and threat protection — Business Premium adds Intune MDM, Defender for Business, and Conditional Access policies. $9.50/user/mo uplift.`);
       }
-      if (newLicenses.includes("Microsoft 365 Business Basic") && isSecurityDept) {
+      if (newLicenses.includes("Microsoft 365 Business Basic")) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Basic");
         newLicenses.push("Microsoft 365 Business Premium");
-        reasons.push(`${user.department} needs endpoint protection and identity governance — Business Premium adds Intune, Defender for Business, and Conditional Access. Essential for security-facing staff. $16/user/mo uplift.`);
+        reasons.push(`${user.department} ${isSecurityDept ? "needs" : "selected for"} endpoint protection and identity governance — Business Premium adds Intune, Defender for Business, and Conditional Access. $16/user/mo uplift.`);
       }
     }
 
-    if (r.downgradeUnderutilizedE5 && hasMailboxData) {
-      if (newLicenses.includes("Microsoft 365 E5") && !isSecurityDept && usageRatio < effThreshold) {
+    if (r.downgradeUnderutilizedE5.enabled && hasMailboxData) {
+      const th = ruleThreshold(r.downgradeUnderutilizedE5);
+      const inScope = scopeMatchesDept(r.downgradeUnderutilizedE5, user.department);
+      if (inScope && newLicenses.includes("Microsoft 365 E5") && usageRatio < th) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E5");
         newLicenses.push("Microsoft 365 E3");
         reasons.push(`E5 in ${user.department} at only ${usageRatio.toFixed(0)}% utilization — advanced threat protection, Phone System, and audio conferencing are unused capabilities. E3 retains core security and compliance. Saves $21/user/mo.`);
-      } else if (newLicenses.includes("Office 365 E5") && !isSecurityDept && usageRatio < effThreshold) {
+      } else if (inScope && newLicenses.includes("Office 365 E5") && usageRatio < th) {
         newLicenses = newLicenses.filter(l => l !== "Office 365 E5");
         newLicenses.push("Office 365 E3");
         reasons.push(`Office 365 E5 in ${user.department} at ${usageRatio.toFixed(0)}% — premium analytics and advanced voice features unused. E3 retains full productivity suite. Saves $15/user/mo.`);
       }
     }
 
-    if (r.downgradeOverprovisionedE3 && hasMailboxData) {
-      if (newLicenses.includes("Microsoft 365 E3") && usageRatio < effThreshold && !isSecurityDept) {
+    if (r.downgradeOverprovisionedE3.enabled && hasMailboxData) {
+      const th = ruleThreshold(r.downgradeOverprovisionedE3);
+      if (scopeMatchesDept(r.downgradeOverprovisionedE3, user.department) && newLicenses.includes("Microsoft 365 E3") && usageRatio < th) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
         newLicenses.push("Microsoft 365 Business Standard");
         reasons.push(`E3 user at ${usageRatio.toFixed(0)}% in ${user.department} — E3's enterprise compliance and Windows Enterprise licensing are underutilized. Business Standard covers desktop apps, email, and Teams. Saves $23.50/user/mo.`);
       }
     }
 
-    if (r.downgradeUnderutilizedBizPremium && hasMailboxData) {
-      if (newLicenses.includes("Microsoft 365 Business Premium") && !isSecurityDept && usageRatio < effThreshold) {
+    if (r.downgradeUnderutilizedBizPremium.enabled && hasMailboxData) {
+      const th = ruleThreshold(r.downgradeUnderutilizedBizPremium);
+      if (scopeMatchesDept(r.downgradeUnderutilizedBizPremium, user.department) && newLicenses.includes("Microsoft 365 Business Premium") && usageRatio < th) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Premium");
         newLicenses.push("Microsoft 365 Business Standard");
-        reasons.push(`Business Premium in ${user.department} at ${usageRatio.toFixed(0)}% — Intune and Defender capabilities are underutilized in non-security roles. Standard retains desktop apps and collaboration tools. Saves $9.50/user/mo.`);
+        reasons.push(`Business Premium in ${user.department} at ${usageRatio.toFixed(0)}% — Intune and Defender capabilities are underutilized. Standard retains desktop apps and collaboration tools. Saves $9.50/user/mo.`);
       }
     }
 
-    if (r.downgradeBizStandardToBasic && hasMailboxData) {
-      if (newLicenses.includes("Microsoft 365 Business Standard") && usageRatio < effThreshold && !isSecurityDept) {
+    if (r.downgradeBizStandardToBasic.enabled && hasMailboxData) {
+      const th = ruleThreshold(r.downgradeBizStandardToBasic);
+      if (scopeMatchesDept(r.downgradeBizStandardToBasic, user.department) && newLicenses.includes("Microsoft 365 Business Standard") && usageRatio < th) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Standard");
         newLicenses.push("Microsoft 365 Business Basic");
         reasons.push(`Standard at ${usageRatio.toFixed(0)}% in ${user.department} — desktop Office apps are likely unused at this activity level. Basic provides full web/mobile access to Outlook, Teams, and OneDrive. Saves $6.50/user/mo.`);
@@ -1323,129 +1354,304 @@ export default function Dashboard() {
             })}
           </div>
 
-          {strategy === 'custom' && (
+          {strategy === 'custom' && (() => {
+            const allLicenses = data.flatMap(u => u.licenses);
+            const licSet = new Set(allLicenses);
+            const hasE1 = licSet.has("Office 365 E1");
+            const hasF1 = licSet.has("Microsoft 365 F1") || licSet.has("Microsoft 365 F3") || licSet.has("Office 365 F3");
+            const hasE3 = licSet.has("Microsoft 365 E3") || licSet.has("Office 365 E3");
+            const hasE5 = licSet.has("Microsoft 365 E5") || licSet.has("Office 365 E5");
+            const hasBizBasic = licSet.has("Microsoft 365 Business Basic");
+            const hasBizStd = licSet.has("Microsoft 365 Business Standard");
+            const hasBizPrem = licSet.has("Microsoft 365 Business Premium");
+            const hasVisio = licSet.has("Visio Plan 2") || licSet.has("Visio Plan 1");
+            const hasProject = licSet.has("Project Plan 3") || licSet.has("Project Plan 5") || licSet.has("Project Plan 1");
+            const hasPBIPremium = licSet.has("Power BI Premium Per User");
+            const hasDefenderAddon = licSet.has("Defender for Office 365 P1") || licSet.has("Defender for Office 365 P2") || licSet.has("Defender for Business");
+            const hasOneDriveStandalone = licSet.has("OneDrive for Business P1") || licSet.has("OneDrive for Business P2");
+            const hasEMSAddon = licSet.has("Entra ID P1") || licSet.has("Entra ID P2") || licSet.has("Microsoft Intune Plan 1");
+            const hasExchangeStandalone = licSet.has("Exchange Online Plan 1") || licSet.has("Exchange Online Plan 2") || licSet.has("Exchange Online Kiosk");
+            const hasTrials = allLicenses.some(l => ["Teams Exploratory", "Power Automate Free", "Power Apps Trial", "Microsoft Stream", "Microsoft Teams (Free)", "Microsoft Teams Trial", "Power Virtual Agents Trial", "Microsoft Clipchamp", "Rights Management Adhoc"].includes(l));
+            const hasRedundant = hasDefenderAddon || hasOneDriveStandalone || hasEMSAddon;
+            const hasOverlap = hasExchangeStandalone || hasTrials;
+            const hasAddons = hasVisio || hasProject || hasPBIPremium;
+
+            const isScopedRule = (key: string): key is keyof CustomRulesState & ('upgradeUnderprovisioned' | 'upgradeToE5' | 'upgradeBasicToStandard' | 'upgradeToBizPremium' | 'downgradeUnderutilizedE5' | 'downgradeOverprovisionedE3' | 'downgradeUnderutilizedBizPremium' | 'downgradeBizStandardToBasic') => {
+              return typeof (customRules as any)[key] === 'object' && (customRules as any)[key] !== null;
+            };
+
+            const isRuleEnabled = (key: string): boolean => {
+              const val = (customRules as any)[key];
+              if (typeof val === 'boolean') return val;
+              if (typeof val === 'object' && val !== null) return val.enabled;
+              return false;
+            };
+
+            const toggleRule = (key: string) => {
+              setCustomRules(prev => {
+                const val = (prev as any)[key];
+                if (typeof val === 'boolean') return { ...prev, [key]: !val };
+                if (typeof val === 'object' && val !== null) return { ...prev, [key]: { ...val, enabled: !val.enabled } };
+                return prev;
+              });
+            };
+
+            const setScopeForRule = (key: string, scope: RuleScope) => {
+              setCustomRules(prev => {
+                const val = (prev as any)[key];
+                if (typeof val === 'object' && val !== null) return { ...prev, [key]: { ...val, scope } };
+                return prev;
+              });
+            };
+
+            const setDepartmentsForRule = (key: string, dept: string) => {
+              setCustomRules(prev => {
+                const val = (prev as any)[key];
+                if (typeof val === 'object' && val !== null) {
+                  const depts: string[] = val.departments || [];
+                  const newDepts = depts.includes(dept) ? depts.filter((d: string) => d !== dept) : [...depts, dept];
+                  return { ...prev, [key]: { ...val, departments: newDepts } };
+                }
+                return prev;
+              });
+            };
+
+            const setRuleThreshold = (key: string, threshold: number | undefined) => {
+              setCustomRules(prev => {
+                const val = (prev as any)[key];
+                if (typeof val === 'object' && val !== null) return { ...prev, [key]: { ...val, threshold } };
+                return prev;
+              });
+            };
+
+            const getRuleImpact = (key: string): { affected: number; delta: number } => {
+              const baseState: CustomRulesState = {
+                upgradeUnderprovisioned: { enabled: false, scope: "all", departments: [] },
+                upgradeToE5: { enabled: false, scope: "all", departments: [] },
+                upgradeBasicToStandard: { enabled: false, scope: "all", departments: [] },
+                upgradeToBizPremium: { enabled: false, scope: "all", departments: [] },
+                downgradeUnderutilizedE5: { enabled: false, scope: "all", departments: [] },
+                downgradeOverprovisionedE3: { enabled: false, scope: "all", departments: [] },
+                downgradeUnderutilizedBizPremium: { enabled: false, scope: "all", departments: [] },
+                downgradeBizStandardToBasic: { enabled: false, scope: "all", departments: [] },
+                removeUnusedAddons: false, consolidateOverlap: false, removeRedundantAddons: false,
+                addCopilotPowerUsers: false, usageThreshold: customRules.usageThreshold,
+              };
+              const testRules = { ...baseState };
+              const currentVal = (customRules as any)[key];
+              if (typeof currentVal === 'boolean') {
+                (testRules as any)[key] = true;
+              } else if (typeof currentVal === 'object') {
+                (testRules as any)[key] = { ...currentVal, enabled: true };
+              }
+              const result = analyzeAllUsers("custom", testRules);
+              const baseCost = data.reduce((a, c) => a + c.cost, 0);
+              const newCost = result.reduce((a, c) => a + c.cost, 0);
+              const affected = result.filter((u, i) => JSON.stringify(sortLicenses(data[i]?.licenses || [])) !== JSON.stringify(u.licenses)).length;
+              return { affected, delta: newCost - baseCost };
+            };
+
+            type RuleDef = { key: string; label: string; hint: string; scoped: boolean; hasThreshold: boolean };
+
+            const upgradeRules: RuleDef[] = [
+              (hasE1 || hasF1) ? { key: 'upgradeUnderprovisioned', label: 'Upgrade underprovisioned E1/F1', hint: `${hasE1 ? 'E1→E3 for high-usage users.' : ''} ${hasF1 ? 'F1→Basic for users over 2GB.' : ''}`.trim(), scoped: true, hasThreshold: false } : null,
+              hasBizBasic ? { key: 'upgradeBasicToStandard', label: 'Upgrade Business Basic → Standard', hint: `${allLicenses.filter(l => l === "Microsoft 365 Business Basic").length} Basic users. Adds desktop apps. +$6.50/user/mo.`, scoped: true, hasThreshold: false } : null,
+              hasE3 ? { key: 'upgradeToE5', label: 'Upgrade E3 → E5', hint: 'Adds Defender P2, Cloud App Security, eDiscovery Premium. +$21/user/mo.', scoped: true, hasThreshold: false } : null,
+              (hasBizStd || hasBizBasic) ? { key: 'upgradeToBizPremium', label: 'Upgrade Basic/Standard → Premium', hint: 'Adds Intune MDM, Defender for Business, Conditional Access. +$9.50–16/user/mo.', scoped: true, hasThreshold: false } : null,
+              { key: 'addCopilotPowerUsers', label: 'Add Copilot for power users', hint: 'GitHub Copilot for Engineering, M365 Copilot for IT/Design/Analytics.', scoped: false, hasThreshold: false },
+            ].filter(Boolean) as RuleDef[];
+
+            const downgradeRules: RuleDef[] = [
+              hasE5 ? { key: 'downgradeUnderutilizedE5', label: 'Downgrade E5 → E3', hint: `${allLicenses.filter(l => l === "Microsoft 365 E5" || l === "Office 365 E5").length} E5 users. Saves $21/user/mo.`, scoped: true, hasThreshold: true } : null,
+              hasE3 ? { key: 'downgradeOverprovisionedE3', label: 'Downgrade E3 → Business Standard', hint: 'Saves $23.50/user/mo for users not needing enterprise compliance.', scoped: true, hasThreshold: true } : null,
+              hasBizPrem ? { key: 'downgradeUnderutilizedBizPremium', label: 'Downgrade Premium → Standard', hint: `${allLicenses.filter(l => l === "Microsoft 365 Business Premium").length} Premium users. Saves $9.50/user/mo.`, scoped: true, hasThreshold: true } : null,
+              hasBizStd ? { key: 'downgradeBizStandardToBasic', label: 'Downgrade Standard → Basic', hint: `${allLicenses.filter(l => l === "Microsoft 365 Business Standard").length} Standard users. Saves $6.50/user/mo.`, scoped: true, hasThreshold: true } : null,
+            ].filter(Boolean) as RuleDef[];
+
+            const cleanupRules: RuleDef[] = [
+              hasAddons ? { key: 'removeUnusedAddons', label: 'Remove unused add-ons', hint: `${[hasVisio && 'Visio', hasProject && 'Project', hasPBIPremium && 'Power BI Premium'].filter(Boolean).join(', ')} in non-relevant departments.`, scoped: false, hasThreshold: false } : null,
+              hasRedundant ? { key: 'removeRedundantAddons', label: 'Remove redundant add-ons', hint: `${[hasDefenderAddon && 'Defender', hasOneDriveStandalone && 'OneDrive', hasEMSAddon && 'Intune/Entra ID'].filter(Boolean).join(', ')} overlap with suite licenses.`, scoped: false, hasThreshold: false } : null,
+              hasOverlap ? { key: 'consolidateOverlap', label: 'Consolidate overlapping licenses', hint: `${[hasExchangeStandalone && 'Exchange standalone', hasTrials && 'trial/free licenses'].filter(Boolean).join(' and ')} alongside suites.`, scoped: false, hasThreshold: false } : null,
+            ].filter(Boolean) as RuleDef[];
+
+            const recommendations: { text: string; ruleKey: string; config?: Partial<ScopedRule> }[] = [];
+            const basicUserCount = allLicenses.filter(l => l === "Microsoft 365 Business Basic").length;
+            const highUsageBasicCount = data.filter(u => u.licenses.includes("Microsoft 365 Business Basic") && u.maxGB > 0 && (u.usageGB / u.maxGB) > 0.5).length;
+            if (basicUserCount > 0 && highUsageBasicCount / basicUserCount > 0.2) {
+              recommendations.push({ text: `${highUsageBasicCount} of ${basicUserCount} Business Basic users have >50% mailbox usage — upgrade to Standard for desktop apps.`, ruleKey: 'upgradeBasicToStandard', config: { enabled: true, scope: "all" } });
+            }
+            const secDeptsBizNonPrem = data.filter(u => SECURITY_DEPTS.has(u.department) && (u.licenses.includes("Microsoft 365 Business Basic") || u.licenses.includes("Microsoft 365 Business Standard")));
+            if (secDeptsBizNonPrem.length > 0) {
+              recommendations.push({ text: `${secDeptsBizNonPrem.length} security/IT team members lack Premium's endpoint protection and Conditional Access.`, ruleKey: 'upgradeToBizPremium', config: { enabled: true, scope: "security" } });
+            }
+            if (hasRedundant) {
+              const redundantCount = data.filter(u => {
+                const hasSuite = u.licenses.some(l => SUITE_LICENSES.has(l));
+                return hasSuite && u.licenses.some(l => ["Defender for Office 365 P1", "Defender for Office 365 P2", "OneDrive for Business P1", "OneDrive for Business P2", "Entra ID P1", "Microsoft Intune Plan 1"].includes(l));
+              }).length;
+              recommendations.push({ text: `${redundantCount} users have add-ons already included in their suite license — remove for direct savings.`, ruleKey: 'removeRedundantAddons' });
+            }
+            const trialCount = data.filter(u => u.licenses.some(l => ["Teams Exploratory", "Power Automate Free", "Power Apps Trial", "Microsoft Stream", "Microsoft Teams (Free)", "Rights Management Adhoc"].includes(l))).length;
+            if (trialCount > data.length * 0.3 && trialCount > 0) {
+              recommendations.push({ text: `${trialCount} users have trial/free licenses alongside their suite — clean up for clarity.`, ruleKey: 'consolidateOverlap' });
+            }
+            const highTierLowUsage = data.filter(u => {
+              const hasHighTier = u.licenses.some(l => ["Microsoft 365 E5", "Office 365 E5", "Microsoft 365 Business Premium"].includes(l));
+              return hasHighTier && u.maxGB > 0 && (u.usageGB / u.maxGB) < 0.2 && !SECURITY_DEPTS.has(u.department);
+            }).length;
+            if (highTierLowUsage > 0) {
+              recommendations.push({ text: `${highTierLowUsage} premium-tier users have <20% usage in non-security departments — potential downgrade candidates.`, ruleKey: 'downgradeUnderutilizedE5' });
+            }
+
+            const renderScopedConfig = (rule: RuleDef) => {
+              if (!isScopedRule(rule.key)) return null;
+              const scopedVal = (customRules as any)[rule.key] as ScopedRule;
+              if (!scopedVal.enabled) return null;
+              return (
+                <div className="mt-2 pt-2 border-t border-border/30 space-y-2" data-testid={`config-${rule.key}`}>
+                  <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Department Scope</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(["all", "security", "custom"] as RuleScope[]).map(s => (
+                      <button key={s} type="button" onClick={() => setScopeForRule(rule.key, s)}
+                        className={`text-xs px-2.5 py-1 rounded-md border transition-colors ${scopedVal.scope === s ? 'bg-primary/10 border-primary/30 text-primary font-medium' : 'border-border/60 text-muted-foreground hover:bg-muted/30'}`}
+                        data-testid={`scope-${rule.key}-${s}`}
+                      >
+                        {s === "all" ? "All departments" : s === "security" ? "Security depts only" : "Select departments"}
+                      </button>
+                    ))}
+                  </div>
+                  {scopedVal.scope === "custom" && (
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {departments.map(dept => (
+                        <button key={dept} type="button" onClick={() => setDepartmentsForRule(rule.key, dept)}
+                          className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${scopedVal.departments.includes(dept) ? 'bg-primary/10 border-primary/30 text-primary' : 'border-border/50 text-muted-foreground hover:bg-muted/20'}`}
+                          data-testid={`dept-${rule.key}-${dept}`}
+                        >
+                          {dept}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {rule.hasThreshold && (
+                    <div className="flex items-center gap-3 mt-1">
+                      <div className="text-xs text-muted-foreground">Threshold:</div>
+                      <input type="range" min={5} max={50} step={5}
+                        value={scopedVal.threshold ?? customRules.usageThreshold}
+                        onChange={(e) => setRuleThreshold(rule.key, Number(e.target.value))}
+                        className="w-24 accent-primary" data-testid={`threshold-${rule.key}`}
+                      />
+                      <span className="text-xs font-medium w-8">{scopedVal.threshold ?? customRules.usageThreshold}%</span>
+                    </div>
+                  )}
+                </div>
+              );
+            };
+
+            const renderRuleCard = (rule: RuleDef) => {
+              const enabled = isRuleEnabled(rule.key);
+              const impact = enabled ? getRuleImpact(rule.key) : null;
+              return (
+                <div key={rule.key} className={`rounded-lg border p-3 transition-colors ${enabled ? 'border-primary/30 bg-primary/5' : 'border-border/60'}`}>
+                  <button type="button" onClick={() => toggleRule(rule.key)} className="w-full text-left" data-testid={`toggle-custom-${rule.key}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm">{rule.label}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{rule.hint}</div>
+                        {impact && impact.affected > 0 && (
+                          <div className="flex items-center gap-2 mt-1.5 text-[11px]">
+                            <span className="text-muted-foreground">{impact.affected} user{impact.affected !== 1 ? 's' : ''}</span>
+                            <span className={impact.delta < 0 ? 'text-green-600 font-medium' : impact.delta > 0 ? 'text-amber-600 font-medium' : 'text-muted-foreground'}>
+                              {impact.delta > 0 ? '+' : ''}{impact.delta < 0 ? '-' : ''}${Math.abs(impact.delta).toFixed(0)}/mo
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div className={`mt-0.5 h-5 w-9 rounded-full border border-border/60 flex items-center px-0.5 shrink-0 ${enabled ? 'bg-primary/20' : 'bg-muted'}`}>
+                        <div className={`h-4 w-4 rounded-full bg-background shadow-sm transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                      </div>
+                    </div>
+                  </button>
+                  {rule.scoped && renderScopedConfig(rule)}
+                </div>
+              );
+            };
+
+            return (
             <Card className="border-border/60 bg-card shadow-sm">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Custom Analysis Rules</CardTitle>
-                <CardDescription>Showing optimizations available for your current license mix. Rules that don't apply to your data are hidden.</CardDescription>
+                <CardDescription>Configure each rule's scope, thresholds, and target departments. Rules that don't apply to your license mix are hidden.</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {(() => {
-                  const allLicenses = data.flatMap(u => u.licenses);
-                  const licSet = new Set(allLicenses);
-                  const hasE1 = licSet.has("Office 365 E1");
-                  const hasF1 = licSet.has("Microsoft 365 F1") || licSet.has("Microsoft 365 F3") || licSet.has("Office 365 F3");
-                  const hasE3 = licSet.has("Microsoft 365 E3") || licSet.has("Office 365 E3");
-                  const hasE5 = licSet.has("Microsoft 365 E5") || licSet.has("Office 365 E5");
-                  const hasBizBasic = licSet.has("Microsoft 365 Business Basic");
-                  const hasBizStd = licSet.has("Microsoft 365 Business Standard");
-                  const hasBizPrem = licSet.has("Microsoft 365 Business Premium");
-                  const hasVisio = licSet.has("Visio Plan 2") || licSet.has("Visio Plan 1");
-                  const hasProject = licSet.has("Project Plan 3") || licSet.has("Project Plan 5") || licSet.has("Project Plan 1");
-                  const hasPBIPremium = licSet.has("Power BI Premium Per User");
-                  const hasDefenderAddon = licSet.has("Defender for Office 365 P1") || licSet.has("Defender for Office 365 P2") || licSet.has("Defender for Business");
-                  const hasOneDriveStandalone = licSet.has("OneDrive for Business P1") || licSet.has("OneDrive for Business P2");
-                  const hasEMSAddon = licSet.has("Entra ID P1") || licSet.has("Entra ID P2") || licSet.has("Microsoft Intune Plan 1");
-                  const hasExchangeStandalone = licSet.has("Exchange Online Plan 1") || licSet.has("Exchange Online Plan 2") || licSet.has("Exchange Online Kiosk");
-                  const hasTrials = allLicenses.some(l => ["Teams Exploratory", "Power Automate Free", "Power Apps Trial", "Microsoft Stream", "Microsoft Teams (Free)", "Microsoft Teams Trial", "Power Virtual Agents Trial", "Microsoft Clipchamp", "Rights Management Adhoc"].includes(l));
-                  const hasRedundant = hasDefenderAddon || hasOneDriveStandalone || hasEMSAddon;
-                  const hasOverlap = hasExchangeStandalone || hasTrials;
-                  const hasAddons = hasVisio || hasProject || hasPBIPremium;
+              <CardContent className="space-y-5">
+                {recommendations.length > 0 && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 dark:border-blue-900/30 p-4 space-y-2.5">
+                    <div className="flex items-center gap-2 text-sm font-medium text-blue-700 dark:text-blue-300">
+                      <Info className="h-4 w-4" />
+                      Recommended Actions
+                    </div>
+                    {recommendations.map((rec, i) => (
+                      <div key={i} className="flex items-start justify-between gap-3" data-testid={`recommendation-${i}`}>
+                        <div className="text-xs text-blue-800 dark:text-blue-200 leading-relaxed flex-1">{rec.text}</div>
+                        <Button size="sm" variant="outline" className="shrink-0 h-7 text-xs border-blue-300 text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30"
+                          onClick={() => {
+                            setCustomRules(prev => {
+                              const val = (prev as any)[rec.ruleKey];
+                              if (typeof val === 'boolean') return { ...prev, [rec.ruleKey]: true };
+                              if (typeof val === 'object' && rec.config) return { ...prev, [rec.ruleKey]: { ...val, ...rec.config } };
+                              if (typeof val === 'object') return { ...prev, [rec.ruleKey]: { ...val, enabled: true } };
+                              return prev;
+                            });
+                          }}
+                          data-testid={`apply-recommendation-${i}`}
+                        >
+                          Apply
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-                  const upgradeRules = [
-                    (hasE1 || hasF1) && { key: 'upgradeUnderprovisioned', label: 'Upgrade underprovisioned E1/F1 users', hint: `${hasE1 ? 'E1→E3 for high-usage users needing security controls.' : ''} ${hasF1 ? 'F1→Business Basic for users exceeding 2GB mailbox limit.' : ''}`.trim() },
-                    hasBizBasic && { key: 'upgradeBasicToStandard', label: 'Upgrade Business Basic → Standard', hint: `${allLicenses.filter(l => l === "Microsoft 365 Business Basic").length} Basic users in tenant. Standard adds desktop Office apps, Bookings, and webinar hosting. +$6.50/user/mo.` },
-                    hasE3 && { key: 'upgradeToE5Security', label: 'Upgrade E3 → E5 for security depts', hint: 'IT, Engineering, Compliance, and Security staff gain Defender P2, Cloud App Security, and eDiscovery Premium.' },
-                    (hasBizStd || hasBizBasic) && { key: 'upgradeToBizPremiumSecurity', label: 'Upgrade to Business Premium for security depts', hint: 'Adds Intune MDM, Defender for Business, and Conditional Access for zero-trust posture.' },
-                    { key: 'addCopilotPowerUsers', label: 'Add Copilot for power users', hint: 'GitHub Copilot for Engineering ($20/mo), M365 Copilot for IT/Design/Analytics ($30/mo). Targets high-engagement users only.' },
-                  ].filter(Boolean) as { key: string; label: string; hint: string }[];
-
-                  const downgradeRules = [
-                    hasE5 && { key: 'downgradeUnderutilizedE5', label: 'Downgrade underutilized E5 → E3', hint: `${allLicenses.filter(l => l === "Microsoft 365 E5" || l === "Office 365 E5").length} E5 users. Low-usage users in non-security depts save $21/user/mo by moving to E3.` },
-                    hasE3 && { key: 'downgradeOverprovisionedE3', label: 'Downgrade overprovisioned E3 → Business Standard', hint: 'Users not needing enterprise compliance or Windows Enterprise licensing. Saves $23.50/user/mo.' },
-                    hasBizPrem && { key: 'downgradeUnderutilizedBizPremium', label: 'Downgrade underutilized Business Premium → Standard', hint: `${allLicenses.filter(l => l === "Microsoft 365 Business Premium").length} Premium users. Non-security depts with low engagement save $9.50/user/mo.` },
-                    hasBizStd && { key: 'downgradeBizStandardToBasic', label: 'Downgrade underutilized Standard → Basic', hint: `${allLicenses.filter(l => l === "Microsoft 365 Business Standard").length} Standard users. Users not leveraging desktop apps save $6.50/user/mo on Basic.` },
-                    hasAddons && { key: 'removeUnusedAddons', label: 'Remove unused add-ons', hint: `${[hasVisio && 'Visio', hasProject && 'Project', hasPBIPremium && 'Power BI Premium'].filter(Boolean).join(', ')} licenses detected — remove from non-relevant departments.` },
-                    hasRedundant && { key: 'removeRedundantAddons', label: 'Remove redundant add-ons', hint: `${[hasDefenderAddon && 'Defender', hasOneDriveStandalone && 'OneDrive', hasEMSAddon && 'Intune/Entra ID'].filter(Boolean).join(', ')} add-ons detected that overlap with suite licenses. Direct cost savings.` },
-                    hasOverlap && { key: 'consolidateOverlap', label: 'Consolidate overlapping licenses', hint: `${[hasExchangeStandalone && 'Exchange standalone', hasTrials && 'trial/free licenses'].filter(Boolean).join(' and ')} detected alongside suite licenses. Cleanup reduces clutter and cost.` },
-                  ].filter(Boolean) as { key: string; label: string; hint: string }[];
-
-                  return (<>
                 {upgradeRules.length > 0 && (
                 <div>
                   <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Upgrades</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {upgradeRules.map((r) => (
-                      <button
-                        key={r.key}
-                        type="button"
-                        onClick={() => setCustomRules((prev) => ({ ...prev, [r.key]: !(prev as any)[r.key] }))}
-                        className={`text-left rounded-lg border p-3 transition-colors hover:bg-muted/30 ${(customRules as any)[r.key] ? 'border-primary/30 bg-primary/5' : 'border-border/60'}`}
-                        data-testid={`toggle-custom-${r.key}`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="font-medium text-sm">{r.label}</div>
-                            <div className="text-xs text-muted-foreground mt-1">{r.hint}</div>
-                          </div>
-                          <div className={`mt-0.5 h-5 w-9 rounded-full border border-border/60 flex items-center px-0.5 shrink-0 ${(customRules as any)[r.key] ? 'bg-primary/20' : 'bg-muted'}`}>
-                            <div className={`h-4 w-4 rounded-full bg-background shadow-sm transition-transform ${(customRules as any)[r.key] ? 'translate-x-4' : 'translate-x-0'}`} />
-                          </div>
-                        </div>
-                      </button>
-                    ))}
+                    {upgradeRules.map(renderRuleCard)}
                   </div>
                 </div>
                 )}
                 {downgradeRules.length > 0 && (
                 <div>
-                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Downgrades & Savings</div>
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Downgrades</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {downgradeRules.map((r) => (
-                      <button
-                        key={r.key}
-                        type="button"
-                        onClick={() => setCustomRules((prev) => ({ ...prev, [r.key]: !(prev as any)[r.key] }))}
-                        className={`text-left rounded-lg border p-3 transition-colors hover:bg-muted/30 ${(customRules as any)[r.key] ? 'border-primary/30 bg-primary/5' : 'border-border/60'}`}
-                        data-testid={`toggle-custom-${r.key}`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="font-medium text-sm">{r.label}</div>
-                            <div className="text-xs text-muted-foreground mt-1">{r.hint}</div>
-                          </div>
-                          <div className={`mt-0.5 h-5 w-9 rounded-full border border-border/60 flex items-center px-0.5 shrink-0 ${(customRules as any)[r.key] ? 'bg-primary/20' : 'bg-muted'}`}>
-                            <div className={`h-4 w-4 rounded-full bg-background shadow-sm transition-transform ${(customRules as any)[r.key] ? 'translate-x-4' : 'translate-x-0'}`} />
-                          </div>
-                        </div>
-                      </button>
-                    ))}
+                    {downgradeRules.map(renderRuleCard)}
                   </div>
                 </div>
-                )}</>);
-                })()}
+                )}
+                {cleanupRules.length > 0 && (
                 <div>
-                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Usage Threshold</div>
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Cleanup</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {cleanupRules.map(renderRuleCard)}
+                  </div>
+                </div>
+                )}
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Global Settings</div>
                   <div className="flex items-center gap-4 p-3 border border-border/60 rounded-lg">
                     <div className="flex-1">
-                      <div className="font-medium text-sm">Low-usage threshold: {customRules.usageThreshold}%</div>
-                      <div className="text-xs text-muted-foreground mt-1">Users below this mailbox usage % are flagged for potential downgrade.</div>
+                      <div className="font-medium text-sm">Default low-usage threshold: {customRules.usageThreshold}%</div>
+                      <div className="text-xs text-muted-foreground mt-1">Fallback for downgrade rules without a custom threshold.</div>
                     </div>
-                    <input
-                      type="range"
-                      min={5}
-                      max={50}
-                      step={5}
-                      value={customRules.usageThreshold}
+                    <input type="range" min={5} max={50} step={5} value={customRules.usageThreshold}
                       onChange={(e) => setCustomRules(prev => ({ ...prev, usageThreshold: Number(e.target.value) }))}
-                      className="w-32 accent-primary"
-                      data-testid="slider-usage-threshold"
+                      className="w-32 accent-primary" data-testid="slider-usage-threshold"
                     />
                   </div>
                 </div>
               </CardContent>
             </Card>
-          )}
+            );
+          })()}
         </div>
 
         {/* Data Table */}
