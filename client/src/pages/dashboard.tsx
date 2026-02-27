@@ -418,18 +418,18 @@ export default function Dashboard() {
       if (newLicenses.includes("Office 365 E1") && hasMailboxData && usageRatio > 50) {
         newLicenses = newLicenses.filter(l => l !== "Office 365 E1");
         newLicenses.push("Microsoft 365 E3");
-        reasons.push(`Mailbox at ${usageRatio.toFixed(0)}% — E1 lacks security features needed at this usage level; upgrade to E3`);
+        reasons.push(`E1 at ${usageRatio.toFixed(0)}% capacity — missing MFA enforcement, DLP policies, and data retention controls that E3 provides. Reduces breach risk and supports compliance requirements.`);
       } else if (newLicenses.includes("Office 365 E1")) {
         if (strat === "security") {
           newLicenses = newLicenses.filter(l => l !== "Office 365 E1");
           newLicenses.push("Microsoft 365 E3");
-          reasons.push(`E1 lacks MFA, DLP, and compliance tools — upgrade to E3 for baseline security`);
+          reasons.push(`E1 provides no endpoint management, conditional access, or data loss prevention — key gaps for regulatory compliance. E3 closes these gaps at $26/user/mo additional.`);
         }
       }
       if (newLicenses.includes("Microsoft 365 F1") && hasMailboxData && usageRatio > 30) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 F1");
         newLicenses.push("Microsoft 365 Business Basic");
-        reasons.push(`F1 user with ${usageRatio.toFixed(0)}% mailbox usage — needs full mailbox access; upgrade to Business Basic`);
+        reasons.push(`F1 limits mailbox to 2GB, but this user is at ${usageRatio.toFixed(0)}% of quota — Business Basic provides a full 50GB mailbox and web Office apps for $3.75/mo more.`);
       }
     }
 
@@ -437,7 +437,7 @@ export default function Dashboard() {
       if (newLicenses.includes("Microsoft 365 Business Basic") && hasMailboxData && usageRatio > 50) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Basic");
         newLicenses.push("Microsoft 365 Business Standard");
-        reasons.push(`Business Basic at ${usageRatio.toFixed(0)}% usage — upgrade to Standard for desktop apps and advanced features`);
+        reasons.push(`High engagement user (${usageRatio.toFixed(0)}% mailbox) on Basic — Standard adds installable desktop Office apps and Bookings, enabling offline productivity and reducing shadow IT risk. $6.50/user/mo uplift.`);
       }
     }
 
@@ -445,7 +445,7 @@ export default function Dashboard() {
       if (newLicenses.includes("Microsoft 365 E3") && isSecurityDept) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
         newLicenses.push("Microsoft 365 E5");
-        reasons.push(`${user.department} dept needs advanced threat protection & compliance — upgrade to E5`);
+        reasons.push(`${user.department} handles sensitive data/systems — E5 adds Defender for Office 365 P2, Cloud App Security, auto-investigation & response, and eDiscovery Premium. Critical for security-facing roles.`);
       }
     }
 
@@ -453,12 +453,12 @@ export default function Dashboard() {
       if (newLicenses.includes("Microsoft 365 Business Standard") && isSecurityDept) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Standard");
         newLicenses.push("Microsoft 365 Business Premium");
-        reasons.push(`${user.department} dept needs Intune, Defender & Conditional Access — upgrade to Business Premium`);
+        reasons.push(`${user.department} requires device management and threat protection — Business Premium adds Intune MDM, Defender for Business, and Conditional Access policies. Strengthens zero-trust posture at $9.50/user/mo uplift.`);
       }
       if (newLicenses.includes("Microsoft 365 Business Basic") && isSecurityDept) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Basic");
         newLicenses.push("Microsoft 365 Business Premium");
-        reasons.push(`${user.department} dept needs Intune, Defender & Conditional Access — upgrade to Business Premium`);
+        reasons.push(`${user.department} needs endpoint protection and identity governance — Business Premium adds Intune, Defender for Business, and Conditional Access. Essential for security-facing staff. $16/user/mo uplift.`);
       }
     }
 
@@ -466,11 +466,11 @@ export default function Dashboard() {
       if (newLicenses.includes("Microsoft 365 E5") && !isSecurityDept && usageRatio < effThreshold) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E5");
         newLicenses.push("Microsoft 365 E3");
-        reasons.push(`E5 in ${user.department} with only ${usageRatio.toFixed(0)}% usage — E3 covers needs`);
+        reasons.push(`E5 in ${user.department} at only ${usageRatio.toFixed(0)}% utilization — advanced threat protection, Phone System, and audio conferencing are unused capabilities. E3 retains core security and compliance. Saves $21/user/mo.`);
       } else if (newLicenses.includes("Office 365 E5") && !isSecurityDept && usageRatio < effThreshold) {
         newLicenses = newLicenses.filter(l => l !== "Office 365 E5");
         newLicenses.push("Office 365 E3");
-        reasons.push(`Office 365 E5 in ${user.department} at ${usageRatio.toFixed(0)}% usage — downgrade to E3`);
+        reasons.push(`Office 365 E5 in ${user.department} at ${usageRatio.toFixed(0)}% — premium analytics and advanced voice features unused. E3 retains full productivity suite. Saves $15/user/mo.`);
       }
     }
 
@@ -478,7 +478,7 @@ export default function Dashboard() {
       if (newLicenses.includes("Microsoft 365 E3") && usageRatio < effThreshold && !isSecurityDept) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
         newLicenses.push("Microsoft 365 Business Standard");
-        reasons.push(`E3 user at ${usageRatio.toFixed(0)}% usage in ${user.department} — Business Standard sufficient`);
+        reasons.push(`E3 user at ${usageRatio.toFixed(0)}% in ${user.department} — E3's enterprise compliance and Windows Enterprise licensing are underutilized. Business Standard covers desktop apps, email, and Teams. Saves $23.50/user/mo.`);
       }
     }
 
@@ -486,7 +486,7 @@ export default function Dashboard() {
       if (newLicenses.includes("Microsoft 365 Business Premium") && !isSecurityDept && usageRatio < effThreshold) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Premium");
         newLicenses.push("Microsoft 365 Business Standard");
-        reasons.push(`Business Premium in ${user.department} at ${usageRatio.toFixed(0)}% usage — Standard sufficient for non-security dept`);
+        reasons.push(`Business Premium in ${user.department} at ${usageRatio.toFixed(0)}% — Intune and Defender capabilities are underutilized in non-security roles. Standard retains desktop apps and collaboration tools. Saves $9.50/user/mo.`);
       }
     }
 
@@ -494,28 +494,28 @@ export default function Dashboard() {
       if (newLicenses.includes("Microsoft 365 Business Standard") && usageRatio < effThreshold && !isSecurityDept) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Standard");
         newLicenses.push("Microsoft 365 Business Basic");
-        reasons.push(`Business Standard at ${usageRatio.toFixed(0)}% usage in ${user.department} — Business Basic sufficient`);
+        reasons.push(`Standard at ${usageRatio.toFixed(0)}% in ${user.department} — desktop Office apps are likely unused at this activity level. Basic provides full web/mobile access to Outlook, Teams, and OneDrive. Saves $6.50/user/mo.`);
       }
     }
 
     if (r.removeUnusedAddons) {
       if (newLicenses.includes("Visio Plan 2") && !["Engineering", "Architecture", "Design", "PMO"].includes(user.department)) {
         newLicenses = newLicenses.filter(l => l !== "Visio Plan 2");
-        reasons.push(`Visio Plan 2 in ${user.department} — not a typical Visio department`);
+        reasons.push(`Visio Plan 2 ($15/mo) assigned to ${user.department} — diagramming tools are typically used by Engineering, Architecture, and PMO. Consider reassigning or removing to avoid license waste.`);
       }
       if (newLicenses.includes("Project Plan 3") && hasMailboxData && usageRatio < effThreshold && !["PMO", "IT", "Engineering"].includes(user.department)) {
         newLicenses = newLicenses.filter(l => l !== "Project Plan 3");
-        reasons.push(`Project Plan 3 with low activity in ${user.department} — remove unused add-on`);
+        reasons.push(`Project Plan 3 ($30/mo) with low activity in ${user.department} — no evidence of active project management usage. Planner (included in suite) covers basic task management needs.`);
       }
       if (newLicenses.includes("Project Plan 5") && !["PMO", "IT"].includes(user.department)) {
         newLicenses = newLicenses.filter(l => l !== "Project Plan 5");
         newLicenses.push("Project Plan 3");
-        reasons.push(`Project Plan 5 in ${user.department} — Plan 3 sufficient for non-PMO`);
+        reasons.push(`Project Plan 5 ($55/mo) in ${user.department} — Plan 5's portfolio management, resource optimization, and demand management are enterprise PMO features. Plan 3 covers standard project scheduling. Saves $25/user/mo.`);
       }
       if (newLicenses.includes("Power BI Premium Per User") && !["Finance", "Analytics", "IT", "Engineering"].includes(user.department)) {
         newLicenses = newLicenses.filter(l => l !== "Power BI Premium Per User");
         newLicenses.push("Power BI Pro");
-        reasons.push(`Power BI Premium in ${user.department} — Pro tier sufficient`);
+        reasons.push(`Power BI Premium Per User ($20/mo) in ${user.department} — Premium features like paginated reports, AI insights, and deployment pipelines are typically data-team needs. Pro covers standard reporting. Saves $10/user/mo.`);
       }
     }
 
@@ -524,29 +524,29 @@ export default function Dashboard() {
       const hasE5 = newLicenses.includes("Microsoft 365 E5");
       if ((hasBizPremium || hasE5) && newLicenses.includes("Defender for Office 365 P1")) {
         newLicenses = newLicenses.filter(l => l !== "Defender for Office 365 P1");
-        reasons.push(`Defender for Office 365 P1 redundant — already included in ${hasBizPremium ? "Business Premium" : "E5"}`);
+        reasons.push(`Defender for Office 365 P1 ($2/mo) is redundant — ${hasBizPremium ? "Business Premium includes Defender for Business with equivalent anti-phishing and safe attachments" : "E5 includes Defender P2 which supersedes P1"}. Direct cost savings with no capability loss.`);
       }
       if (hasE5 && newLicenses.includes("Defender for Office 365 P2")) {
         newLicenses = newLicenses.filter(l => l !== "Defender for Office 365 P2");
-        reasons.push(`Defender for Office 365 P2 redundant — already included in E5`);
+        reasons.push(`Defender for Office 365 P2 ($5/mo) is redundant — E5 already bundles full Defender P2 capabilities including auto-investigation and attack simulation training.`);
       }
       const hasAnySuite = newLicenses.some(l => SUITE_LICENSES.has(l));
       if (hasAnySuite && newLicenses.includes("OneDrive for Business P2")) {
         newLicenses = newLicenses.filter(l => l !== "OneDrive for Business P2");
-        reasons.push(`OneDrive standalone redundant — already included in suite license`);
+        reasons.push(`OneDrive standalone license is redundant — suite license already includes OneDrive for Business with 1TB+ storage. Duplicate assignment creates unnecessary cost.`);
       }
       if (hasAnySuite && newLicenses.includes("OneDrive for Business P1")) {
         newLicenses = newLicenses.filter(l => l !== "OneDrive for Business P1");
-        reasons.push(`OneDrive standalone redundant — already included in suite license`);
+        reasons.push(`OneDrive standalone ($5/mo) is redundant — suite license already includes OneDrive for Business. Removing eliminates duplicate spend.`);
       }
       const hasEMSE3orHigher = newLicenses.some(l => ["Enterprise Mobility + Security E3", "Enterprise Mobility + Security E5", "Microsoft 365 E3", "Microsoft 365 E5"].includes(l));
       if (hasEMSE3orHigher && newLicenses.includes("Entra ID P1")) {
         newLicenses = newLicenses.filter(l => l !== "Entra ID P1");
-        reasons.push(`Entra ID P1 redundant — already included in suite or EMS license`);
+        reasons.push(`Entra ID P1 ($6/mo) is redundant — already bundled in the EMS or M365 E3+ suite. Conditional access and MFA are available without this standalone license.`);
       }
       if (hasEMSE3orHigher && newLicenses.includes("Microsoft Intune Plan 1")) {
         newLicenses = newLicenses.filter(l => l !== "Microsoft Intune Plan 1");
-        reasons.push(`Intune Plan 1 redundant — already included in suite or EMS license`);
+        reasons.push(`Intune Plan 1 ($8/mo) is redundant — device management is already included in the EMS or M365 E3+ suite. Removing eliminates double billing.`);
       }
     }
 
@@ -557,15 +557,15 @@ export default function Dashboard() {
       ].includes(l));
       if (hasSuiteWithExchange && newLicenses.includes("Exchange Online Plan 1")) {
         newLicenses = newLicenses.filter(l => l !== "Exchange Online Plan 1");
-        reasons.push(`Exchange Online Plan 1 redundant — already included in suite license`);
+        reasons.push(`Exchange Online Plan 1 ($4/mo) is redundant — the suite license already provides Exchange Online with equal or greater mailbox capacity. Likely a leftover from migration.`);
       }
       if (hasSuiteWithExchange && newLicenses.includes("Exchange Online Plan 2")) {
         newLicenses = newLicenses.filter(l => l !== "Exchange Online Plan 2");
-        reasons.push(`Exchange Online Plan 2 redundant — already included in suite license`);
+        reasons.push(`Exchange Online Plan 2 ($8/mo) is redundant — suite license includes full Exchange functionality. If 100GB mailbox is specifically needed, confirm before removing.`);
       }
       if (hasSuiteWithExchange && newLicenses.includes("Exchange Online Kiosk")) {
         newLicenses = newLicenses.filter(l => l !== "Exchange Online Kiosk");
-        reasons.push(`Exchange Online Kiosk redundant — already included in suite license`);
+        reasons.push(`Exchange Online Kiosk ($2/mo) is redundant — suite license already provides a full mailbox. Kiosk is likely a provisioning artifact.`);
       }
       const freeTrials = newLicenses.filter(l => [
         "Teams Exploratory", "Power Automate Free", "Power Apps Trial", "Microsoft Stream",
@@ -575,7 +575,7 @@ export default function Dashboard() {
       ].includes(l));
       if (hasSuiteWithExchange && freeTrials.length > 0) {
         newLicenses = newLicenses.filter(l => !freeTrials.includes(l));
-        reasons.push(`Removed ${freeTrials.length} trial/free license(s) — functionality covered by suite`);
+        reasons.push(`Removed ${freeTrials.length} trial/free license(s) — these are self-service signups that create license clutter. All functionality is covered by the assigned suite.`);
       }
     }
 
@@ -584,10 +584,10 @@ export default function Dashboard() {
       if (powerUserDepts.has(user.department) && hasMailboxData && usageRatio > 50 && !newLicenses.includes("GitHub Copilot") && !newLicenses.includes("Microsoft 365 Copilot")) {
         if (user.department === "Engineering") {
           newLicenses.push("GitHub Copilot");
-          reasons.push(`High-activity Engineering user — GitHub Copilot boosts developer productivity`);
+          reasons.push(`High-engagement Engineering user — GitHub Copilot delivers 30-55% developer productivity gains per industry benchmarks. ROI typically exceeds cost within the first month of adoption.`);
         } else {
           newLicenses.push("Microsoft 365 Copilot");
-          reasons.push(`High-activity ${user.department} power user — M365 Copilot accelerates productivity`);
+          reasons.push(`Power user in ${user.department} with ${usageRatio.toFixed(0)}% engagement — M365 Copilot accelerates document drafting, email triage, and meeting summaries. Best ROI for high-activity knowledge workers.`);
         }
       }
     }
@@ -1212,19 +1212,55 @@ export default function Dashboard() {
             <Card className="border-border/60 bg-card shadow-sm">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Custom Analysis Rules</CardTitle>
-                <CardDescription>Configure which optimizations the engine applies, based on actual usage data.</CardDescription>
+                <CardDescription>Showing optimizations available for your current license mix. Rules that don't apply to your data are hidden.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                {(() => {
+                  const allLicenses = data.flatMap(u => u.licenses);
+                  const licSet = new Set(allLicenses);
+                  const hasE1 = licSet.has("Office 365 E1");
+                  const hasF1 = licSet.has("Microsoft 365 F1") || licSet.has("Microsoft 365 F3") || licSet.has("Office 365 F3");
+                  const hasE3 = licSet.has("Microsoft 365 E3") || licSet.has("Office 365 E3");
+                  const hasE5 = licSet.has("Microsoft 365 E5") || licSet.has("Office 365 E5");
+                  const hasBizBasic = licSet.has("Microsoft 365 Business Basic");
+                  const hasBizStd = licSet.has("Microsoft 365 Business Standard");
+                  const hasBizPrem = licSet.has("Microsoft 365 Business Premium");
+                  const hasVisio = licSet.has("Visio Plan 2") || licSet.has("Visio Plan 1");
+                  const hasProject = licSet.has("Project Plan 3") || licSet.has("Project Plan 5") || licSet.has("Project Plan 1");
+                  const hasPBIPremium = licSet.has("Power BI Premium Per User");
+                  const hasDefenderAddon = licSet.has("Defender for Office 365 P1") || licSet.has("Defender for Office 365 P2") || licSet.has("Defender for Business");
+                  const hasOneDriveStandalone = licSet.has("OneDrive for Business P1") || licSet.has("OneDrive for Business P2");
+                  const hasEMSAddon = licSet.has("Entra ID P1") || licSet.has("Entra ID P2") || licSet.has("Microsoft Intune Plan 1");
+                  const hasExchangeStandalone = licSet.has("Exchange Online Plan 1") || licSet.has("Exchange Online Plan 2") || licSet.has("Exchange Online Kiosk");
+                  const hasTrials = allLicenses.some(l => ["Teams Exploratory", "Power Automate Free", "Power Apps Trial", "Microsoft Stream", "Microsoft Teams (Free)", "Microsoft Teams Trial", "Power Virtual Agents Trial", "Microsoft Clipchamp", "Rights Management Adhoc"].includes(l));
+                  const hasRedundant = hasDefenderAddon || hasOneDriveStandalone || hasEMSAddon;
+                  const hasOverlap = hasExchangeStandalone || hasTrials;
+                  const hasAddons = hasVisio || hasProject || hasPBIPremium;
+
+                  const upgradeRules = [
+                    (hasE1 || hasF1) && { key: 'upgradeUnderprovisioned', label: 'Upgrade underprovisioned E1/F1 users', hint: `${hasE1 ? 'E1→E3 for high-usage users needing security controls.' : ''} ${hasF1 ? 'F1→Business Basic for users exceeding 2GB mailbox limit.' : ''}`.trim() },
+                    hasBizBasic && { key: 'upgradeBasicToStandard', label: 'Upgrade Business Basic → Standard', hint: `${allLicenses.filter(l => l === "Microsoft 365 Business Basic").length} Basic users in tenant. Standard adds desktop Office apps, Bookings, and webinar hosting. +$6.50/user/mo.` },
+                    hasE3 && { key: 'upgradeToE5Security', label: 'Upgrade E3 → E5 for security depts', hint: 'IT, Engineering, Compliance, and Security staff gain Defender P2, Cloud App Security, and eDiscovery Premium.' },
+                    (hasBizStd || hasBizBasic) && { key: 'upgradeToBizPremiumSecurity', label: 'Upgrade to Business Premium for security depts', hint: 'Adds Intune MDM, Defender for Business, and Conditional Access for zero-trust posture.' },
+                    { key: 'addCopilotPowerUsers', label: 'Add Copilot for power users', hint: 'GitHub Copilot for Engineering ($20/mo), M365 Copilot for IT/Design/Analytics ($30/mo). Targets high-engagement users only.' },
+                  ].filter(Boolean) as { key: string; label: string; hint: string }[];
+
+                  const downgradeRules = [
+                    hasE5 && { key: 'downgradeUnderutilizedE5', label: 'Downgrade underutilized E5 → E3', hint: `${allLicenses.filter(l => l === "Microsoft 365 E5" || l === "Office 365 E5").length} E5 users. Low-usage users in non-security depts save $21/user/mo by moving to E3.` },
+                    hasE3 && { key: 'downgradeOverprovisionedE3', label: 'Downgrade overprovisioned E3 → Business Standard', hint: 'Users not needing enterprise compliance or Windows Enterprise licensing. Saves $23.50/user/mo.' },
+                    hasBizPrem && { key: 'downgradeUnderutilizedBizPremium', label: 'Downgrade underutilized Business Premium → Standard', hint: `${allLicenses.filter(l => l === "Microsoft 365 Business Premium").length} Premium users. Non-security depts with low engagement save $9.50/user/mo.` },
+                    hasBizStd && { key: 'downgradeBizStandardToBasic', label: 'Downgrade underutilized Standard → Basic', hint: `${allLicenses.filter(l => l === "Microsoft 365 Business Standard").length} Standard users. Users not leveraging desktop apps save $6.50/user/mo on Basic.` },
+                    hasAddons && { key: 'removeUnusedAddons', label: 'Remove unused add-ons', hint: `${[hasVisio && 'Visio', hasProject && 'Project', hasPBIPremium && 'Power BI Premium'].filter(Boolean).join(', ')} licenses detected — remove from non-relevant departments.` },
+                    hasRedundant && { key: 'removeRedundantAddons', label: 'Remove redundant add-ons', hint: `${[hasDefenderAddon && 'Defender', hasOneDriveStandalone && 'OneDrive', hasEMSAddon && 'Intune/Entra ID'].filter(Boolean).join(', ')} add-ons detected that overlap with suite licenses. Direct cost savings.` },
+                    hasOverlap && { key: 'consolidateOverlap', label: 'Consolidate overlapping licenses', hint: `${[hasExchangeStandalone && 'Exchange standalone', hasTrials && 'trial/free licenses'].filter(Boolean).join(' and ')} detected alongside suite licenses. Cleanup reduces clutter and cost.` },
+                  ].filter(Boolean) as { key: string; label: string; hint: string }[];
+
+                  return (<>
+                {upgradeRules.length > 0 && (
                 <div>
                   <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Upgrades</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {[
-                      { key: 'upgradeUnderprovisioned', label: 'Upgrade underprovisioned users', hint: 'E1 users with >50% mailbox usage get E3; F1 users with >30% get Business Basic.' },
-                      { key: 'upgradeBasicToStandard', label: 'Upgrade Business Basic to Standard', hint: 'High-usage Basic users benefit from desktop apps and advanced features.' },
-                      { key: 'upgradeToE5Security', label: 'Upgrade security depts to E5', hint: 'IT, Engineering, Compliance, Security staff get E5 for advanced threat protection.' },
-                      { key: 'upgradeToBizPremiumSecurity', label: 'Upgrade to Business Premium for security', hint: 'Security-sensitive depts get Intune, Defender & Conditional Access.' },
-                      { key: 'addCopilotPowerUsers', label: 'Add Copilot for power users', hint: 'GitHub Copilot for Engineering, M365 Copilot for IT/Design/Analytics power users.' },
-                    ].map((r) => (
+                    {upgradeRules.map((r) => (
                       <button
                         key={r.key}
                         type="button"
@@ -1245,18 +1281,12 @@ export default function Dashboard() {
                     ))}
                   </div>
                 </div>
+                )}
+                {downgradeRules.length > 0 && (
                 <div>
                   <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Downgrades & Savings</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {[
-                      { key: 'downgradeUnderutilizedE5', label: 'Downgrade underutilized E5', hint: 'E5 users in non-security depts with low usage move to E3.' },
-                      { key: 'downgradeOverprovisionedE3', label: 'Downgrade overprovisioned E3', hint: 'E3 users with low usage in non-security depts move to Business Standard.' },
-                      { key: 'downgradeUnderutilizedBizPremium', label: 'Downgrade underutilized Business Premium', hint: 'Non-security depts with low usage move from Premium to Standard.' },
-                      { key: 'downgradeBizStandardToBasic', label: 'Downgrade underutilized Standard to Basic', hint: 'Low-usage users in non-security depts move from Standard to Basic.' },
-                      { key: 'removeUnusedAddons', label: 'Remove unused add-ons', hint: 'Strip Visio, Project, Power BI Premium from non-relevant departments.' },
-                      { key: 'removeRedundantAddons', label: 'Remove redundant add-ons', hint: 'Remove Defender, OneDrive, Intune add-ons already included in suite.' },
-                      { key: 'consolidateOverlap', label: 'Consolidate overlapping licenses', hint: 'Remove standalone Exchange, trials, and free licenses covered by suites.' },
-                    ].map((r) => (
+                    {downgradeRules.map((r) => (
                       <button
                         key={r.key}
                         type="button"
@@ -1277,6 +1307,8 @@ export default function Dashboard() {
                     ))}
                   </div>
                 </div>
+                )}</>);
+                })()}
                 <div>
                   <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Usage Threshold</div>
                   <div className="flex items-center gap-4 p-3 border border-border/60 rounded-lg">
