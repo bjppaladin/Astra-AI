@@ -289,7 +289,7 @@ export default function ExecutiveSummaryPage() {
 
       const flattenStyles = (source: HTMLElement, target: HTMLElement) => {
         const computed = window.getComputedStyle(source);
-        const dominated = [
+        const props = [
           "color", "background-color", "border-color",
           "border-top-color", "border-bottom-color",
           "border-left-color", "border-right-color",
@@ -299,8 +299,8 @@ export default function ExecutiveSummaryPage() {
           "padding-top", "padding-right", "padding-bottom", "padding-left",
           "margin-top", "margin-right", "margin-bottom", "margin-left",
           "display", "flex-direction", "align-items", "justify-content", "gap",
-          "width", "min-width", "max-width", "height", "min-height", "max-height",
-          "overflow", "position", "top", "right", "bottom", "left",
+          "width", "min-width", "max-width",
+          "position", "top", "right", "bottom", "left",
           "border-width", "border-style", "border-radius",
           "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
           "border-top-style", "border-right-style", "border-bottom-style", "border-left-style",
@@ -308,7 +308,7 @@ export default function ExecutiveSummaryPage() {
           "table-layout", "border-collapse", "border-spacing",
           "flex-grow", "flex-shrink", "flex-basis", "flex-wrap", "order",
         ];
-        for (const prop of dominated) {
+        for (const prop of props) {
           let val = computed.getPropertyValue(prop);
           if (val && val !== "initial" && val !== "inherit") {
             if (val.includes("oklab") || val.includes("oklch") || val.includes("color-mix") || val.includes("lab(") || val.includes("lch(")) {
@@ -318,6 +318,12 @@ export default function ExecutiveSummaryPage() {
           }
         }
         target.style.boxShadow = "none";
+        target.style.overflow = "visible";
+        target.style.overflowX = "visible";
+        target.style.overflowY = "visible";
+        target.style.height = "auto";
+        target.style.minHeight = "0";
+        target.style.maxHeight = "none";
 
         const sourceChildren = source.children;
         const targetChildren = target.children;
@@ -330,12 +336,20 @@ export default function ExecutiveSummaryPage() {
 
       const clone = el.cloneNode(true) as HTMLElement;
       iframeDoc.body.appendChild(clone);
+      iframeDoc.body.style.margin = "0";
+      iframeDoc.body.style.padding = "0";
       clone.style.margin = "0";
       clone.style.position = "static";
+      clone.style.overflow = "visible";
 
       flattenStyles(el, clone);
 
       clone.style.backgroundColor = "#ffffff";
+
+      const cloneHeight = clone.scrollHeight;
+      const cloneWidth = clone.scrollWidth;
+      iframe.style.height = cloneHeight + "px";
+      iframe.style.width = cloneWidth + "px";
 
       const html2canvas = (await import("html2canvas")).default;
       const canvas = await html2canvas(clone, {
@@ -343,10 +357,10 @@ export default function ExecutiveSummaryPage() {
         useCORS: true,
         backgroundColor: "#ffffff",
         logging: false,
-        width: el.scrollWidth,
-        height: el.scrollHeight,
-        windowWidth: el.scrollWidth,
-        windowHeight: el.scrollHeight,
+        width: cloneWidth,
+        height: cloneHeight,
+        windowWidth: cloneWidth,
+        windowHeight: cloneHeight,
       });
       return canvas;
     } finally {
