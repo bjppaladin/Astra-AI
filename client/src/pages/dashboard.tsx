@@ -50,6 +50,7 @@ import {
   saveReport,
   uploadUsersFile,
   uploadMailboxFile,
+  uploadActivityFile,
   getMicrosoftAuthStatus,
   getMicrosoftLoginUrl,
   disconnectMicrosoft,
@@ -58,6 +59,7 @@ import {
   fetchGreeting,
   fetchNews,
 } from "@/lib/api";
+import type { UserActivity } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -73,6 +75,7 @@ type UserRow = {
   maxGB: number;
   cost: number;
   status: string;
+  activity: UserActivity | null;
 };
 
 const KEY_FEATURES = [
@@ -188,8 +191,10 @@ export default function Dashboard() {
   const [filterModified, setFilterModified] = useState<string>("all");
   const [strategy, setStrategy] = useState<Strategy>("current");
   const [commitment, setCommitment] = useState<"monthly" | "annual">("annual");
+  const [uploadedActivityFile, setUploadedActivityFile] = useState<string | null>(null);
   const userFileRef = useRef<HTMLInputElement>(null);
   const mailboxFileRef = useRef<HTMLInputElement>(null);
+  const activityFileRef = useRef<HTMLInputElement>(null);
 
   const [msAuth, setMsAuth] = useState<{
     configured: boolean;
@@ -544,11 +549,43 @@ export default function Dashboard() {
     }
   };
 
+  const handleActivityFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    try {
+      const result = await uploadActivityFile(file);
+      setUploadedActivityFile(result.fileName);
+
+      let matchedCount = 0;
+      setData((prev) =>
+        prev.map((user) => {
+          const activity = result.activityData[user.upn.toLowerCase()];
+          if (activity) {
+            matchedCount++;
+            return { ...user, activity };
+          }
+          return user;
+        })
+      );
+      toast({
+        title: "Activity data merged",
+        description: `Matched ${matchedCount} of ${result.totalUsers} activity records to user records.`,
+      });
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsUploading(false);
+      if (activityFileRef.current) activityFileRef.current.value = "";
+    }
+  };
+
   const handleClearUploads = () => {
     setData([]);
     setDataSource("none");
     setUploadedUserFile(null);
     setUploadedMailboxFile(null);
+    setUploadedActivityFile(null);
     setShowUploadPanel(false);
     setStrategy("current");
     toast({ title: "Data cleared", description: "Connect Microsoft 365 or upload reports to get started." });
@@ -630,17 +667,29 @@ export default function Dashboard() {
 
   const handleExportXlsx = () => {
     setShowExportMenu(false);
-    const rows = optimizedData.map((u) => ({
-      "Display Name": u.displayName,
-      UPN: u.upn,
-      Department: u.department,
-      Licenses: u.licenses.join("; "),
-      "Mailbox Usage (GB)": Number(u.usageGB.toFixed(1)),
-      "Mailbox Max (GB)": u.maxGB,
-      "Est. Monthly License Cost": Number(u.cost.toFixed(2)),
-      "Commitment Type": commitment,
-      Strategy: strategy,
-    }));
+    const rows = optimizedData.map((u) => {
+      const act = u.activity;
+      const origUser = data.find(d => d.id === u.id);
+      const isModified = strategy !== "current" && origUser && JSON.stringify(sortLicenses(origUser.licenses)) !== JSON.stringify(u.licenses);
+      return {
+        "Display Name": u.displayName,
+        UPN: u.upn,
+        Department: u.department,
+        Licenses: u.licenses.join("; "),
+        "Mailbox Usage (GB)": Number(u.usageGB.toFixed(1)),
+        "Mailbox Max (GB)": u.maxGB,
+        "Active Services (30d)": act ? `${act.activeServiceCount}/${act.totalServiceCount}` : "N/A",
+        "Exchange Active": act ? (act.exchangeActive ? "Yes" : "No") : "N/A",
+        "Teams Active": act ? (act.teamsActive ? "Yes" : "No") : "N/A",
+        "SharePoint Active": act ? (act.sharePointActive ? "Yes" : "No") : "N/A",
+        "OneDrive Active": act ? (act.oneDriveActive ? "Yes" : "No") : "N/A",
+        "Days Since Last Activity": act?.daysSinceLastActivity !== null && act?.daysSinceLastActivity !== undefined ? act.daysSinceLastActivity : "N/A",
+        "Est. Monthly License Cost": Number(u.cost.toFixed(2)),
+        "Commitment Type": commitment,
+        Strategy: strategy,
+        Recommendation: isModified && u.reasons && u.reasons.length > 0 ? u.reasons.join(" | ") : "",
+      };
+    });
 
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
@@ -730,6 +779,14 @@ export default function Dashboard() {
     const isSecurityDept = SECURITY_DEPTS.has(user.department);
     const globalThreshold = rules.usageThreshold;
 
+    const act = user.activity;
+    const hasActivityData = act !== null;
+    const isFullyInactive = hasActivityData && (act.activeServiceCount === 0 || act.daysSinceLastActivity === null || act.daysSinceLastActivity > 30);
+    const isLowActivity = hasActivityData && act.activeServiceCount <= 1 && act.totalServiceCount >= 3;
+    const isEmailOnly = hasActivityData && act.exchangeActive && !act.teamsActive && !act.sharePointActive && !act.oneDriveActive;
+    const usesAdvancedCollaboration = hasActivityData && act.teamsActive && (act.sharePointActive || act.oneDriveActive);
+    const usesFullSuite = hasActivityData && act.activeServiceCount >= 3;
+
     const getRulesForStrategy = (): CustomRulesState => {
       if (strat === "custom") return rules;
       const s = (enabled: boolean, scope: RuleScope = "all"): ScopedRule => ({ enabled, scope, departments: [] });
@@ -764,29 +821,45 @@ export default function Dashboard() {
     const ruleThreshold = (rule: ScopedRule) => rule.threshold ?? effThreshold;
 
     if (r.upgradeUnderprovisioned.enabled && scopeMatchesDept(r.upgradeUnderprovisioned, user.department)) {
-      if (newLicenses.includes("Office 365 E1") && hasMailboxData && usageRatio > 50) {
-        newLicenses = newLicenses.filter(l => l !== "Office 365 E1");
-        newLicenses.push("Microsoft 365 E3");
-        reasons.push(`E1 at ${usageRatio.toFixed(0)}% capacity — missing MFA enforcement, DLP policies, and data retention controls that E3 provides. Reduces breach risk and supports compliance requirements.`);
-      } else if (newLicenses.includes("Office 365 E1")) {
-        if (strat === "security") {
+      if (newLicenses.includes("Office 365 E1")) {
+        if (hasActivityData && usesAdvancedCollaboration) {
+          newLicenses = newLicenses.filter(l => l !== "Office 365 E1");
+          newLicenses.push("Microsoft 365 E3");
+          reasons.push(`E1 user actively using Teams + ${act!.sharePointActive ? "SharePoint" : "OneDrive"} (${act!.activeServiceCount}/${act!.totalServiceCount} services active) — E3 adds MFA enforcement, DLP, Conditional Access, and desktop apps for advanced collaboration needs.`);
+        } else if (hasMailboxData && usageRatio > 50) {
+          newLicenses = newLicenses.filter(l => l !== "Office 365 E1");
+          newLicenses.push("Microsoft 365 E3");
+          reasons.push(`E1 at ${usageRatio.toFixed(0)}% capacity — missing MFA enforcement, DLP policies, and data retention controls that E3 provides. Reduces breach risk and supports compliance requirements.`);
+        } else if (strat === "security") {
           newLicenses = newLicenses.filter(l => l !== "Office 365 E1");
           newLicenses.push("Microsoft 365 E3");
           reasons.push(`E1 provides no endpoint management, conditional access, or data loss prevention — key gaps for regulatory compliance. E3 closes these gaps at $26/user/mo additional.`);
         }
       }
-      if (newLicenses.includes("Microsoft 365 F1") && hasMailboxData && usageRatio > 30) {
-        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 F1");
-        newLicenses.push("Microsoft 365 Business Basic");
-        reasons.push(`F1 limits mailbox to 2GB, but this user is at ${usageRatio.toFixed(0)}% of quota — Business Basic provides a full 50GB mailbox and web Office apps for $3.75/mo more.`);
+      if (newLicenses.includes("Microsoft 365 F1")) {
+        if (hasActivityData && act!.exchangeActive && act!.activeServiceCount >= 2) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 F1");
+          newLicenses.push("Microsoft 365 Business Basic");
+          reasons.push(`F1 user actively using ${act!.activeServiceCount} services including Exchange — Business Basic provides a full 50GB mailbox and web Office apps for $3.75/mo more.`);
+        } else if (hasMailboxData && usageRatio > 30) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 F1");
+          newLicenses.push("Microsoft 365 Business Basic");
+          reasons.push(`F1 limits mailbox to 2GB, but this user is at ${usageRatio.toFixed(0)}% of quota — Business Basic provides a full 50GB mailbox and web Office apps for $3.75/mo more.`);
+        }
       }
     }
 
     if (r.upgradeBasicToStandard.enabled && scopeMatchesDept(r.upgradeBasicToStandard, user.department)) {
-      if (newLicenses.includes("Microsoft 365 Business Basic") && hasMailboxData && usageRatio > 50) {
-        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Basic");
-        newLicenses.push("Microsoft 365 Business Standard");
-        reasons.push(`High engagement user (${usageRatio.toFixed(0)}% mailbox) on Basic — Standard adds installable desktop Office apps and Bookings, enabling offline productivity and reducing shadow IT risk. $6.50/user/mo uplift.`);
+      if (newLicenses.includes("Microsoft 365 Business Basic")) {
+        if (hasActivityData && usesFullSuite) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Basic");
+          newLicenses.push("Microsoft 365 Business Standard");
+          reasons.push(`Business Basic user actively using ${act!.activeServiceCount} services — Standard adds installable desktop Office apps and Bookings for heavy multi-service users. $6.50/user/mo uplift.`);
+        } else if (hasMailboxData && usageRatio > 50) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Basic");
+          newLicenses.push("Microsoft 365 Business Standard");
+          reasons.push(`High engagement user (${usageRatio.toFixed(0)}% mailbox) on Basic — Standard adds installable desktop Office apps and Bookings, enabling offline productivity and reducing shadow IT risk. $6.50/user/mo uplift.`);
+        }
       }
     }
 
@@ -811,44 +884,83 @@ export default function Dashboard() {
       }
     }
 
-    if (r.downgradeUnderutilizedE5.enabled && hasMailboxData) {
+    if (r.downgradeUnderutilizedE5.enabled) {
       const th = ruleThreshold(r.downgradeUnderutilizedE5);
       const inScope = scopeMatchesDept(r.downgradeUnderutilizedE5, user.department);
-      if (inScope && newLicenses.includes("Microsoft 365 E5") && usageRatio < th) {
-        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E5");
-        newLicenses.push("Microsoft 365 E3");
-        reasons.push(`E5 in ${user.department} at only ${usageRatio.toFixed(0)}% utilization — advanced threat protection, Phone System, and audio conferencing are unused capabilities. E3 retains core security and compliance. Saves $21/user/mo.`);
-      } else if (inScope && newLicenses.includes("Office 365 E5") && usageRatio < th) {
+      if (inScope && newLicenses.includes("Microsoft 365 E5")) {
+        if (hasActivityData && isFullyInactive) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E5");
+          newLicenses.push("Microsoft 365 F3");
+          newLicenses.push("Exchange Online Plan 1");
+          reasons.push(`E5 user with no activity in 30 days — fully inactive. F3 + Exchange Online Plan 1 provides basic email at $12/mo vs $57/mo. Saves $45/user/mo.`);
+        } else if (hasActivityData && isEmailOnly) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E5");
+          newLicenses.push("Microsoft 365 F3");
+          newLicenses.push("Exchange Online Plan 1");
+          reasons.push(`E5 user only using Exchange (${act!.daysSinceLastActivity !== null ? act!.daysSinceLastActivity + "d ago" : "recent"}) — F3 + Exchange Online Plan 1 provides full email at $12/mo vs $57/mo. Saves $45/user/mo.`);
+        } else if (hasMailboxData && usageRatio < th) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E5");
+          newLicenses.push("Microsoft 365 E3");
+          reasons.push(`E5 in ${user.department} at only ${usageRatio.toFixed(0)}% utilization — advanced threat protection, Phone System, and audio conferencing are unused capabilities. E3 retains core security and compliance. Saves $21/user/mo.`);
+        }
+      } else if (inScope && newLicenses.includes("Office 365 E5") && hasMailboxData && usageRatio < th) {
         newLicenses = newLicenses.filter(l => l !== "Office 365 E5");
         newLicenses.push("Office 365 E3");
         reasons.push(`Office 365 E5 in ${user.department} at ${usageRatio.toFixed(0)}% — premium analytics and advanced voice features unused. E3 retains full productivity suite. Saves $15/user/mo.`);
       }
     }
 
-    if (r.downgradeOverprovisionedE3.enabled && hasMailboxData) {
+    if (r.downgradeOverprovisionedE3.enabled) {
       const th = ruleThreshold(r.downgradeOverprovisionedE3);
-      if (scopeMatchesDept(r.downgradeOverprovisionedE3, user.department) && newLicenses.includes("Microsoft 365 E3") && usageRatio < th) {
-        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
-        newLicenses.push("Microsoft 365 Business Standard");
-        reasons.push(`E3 user at ${usageRatio.toFixed(0)}% in ${user.department} — E3's enterprise compliance and Windows Enterprise licensing are underutilized. Business Standard covers desktop apps, email, and Teams. Saves $23.50/user/mo.`);
+      if (scopeMatchesDept(r.downgradeOverprovisionedE3, user.department) && newLicenses.includes("Microsoft 365 E3")) {
+        if (hasActivityData && isFullyInactive) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
+          newLicenses.push("Microsoft 365 F3");
+          reasons.push(`E3 user with no activity in 30 days — fully inactive. F3 provides basic access at $8/mo vs $36/mo. Saves $28/user/mo.`);
+        } else if (hasActivityData && isEmailOnly) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
+          newLicenses.push("Microsoft 365 F3");
+          newLicenses.push("Exchange Online Plan 1");
+          reasons.push(`E3 user with minimal activity — only using Exchange. F3 + Exchange Online Plan 1 provides full email at $12/mo vs $36/mo. Saves $24/user/mo.`);
+        } else if (hasActivityData && isLowActivity) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
+          newLicenses.push("Microsoft 365 Business Standard");
+          reasons.push(`E3 user with low activity (${act!.activeServiceCount}/${act!.totalServiceCount} services) in ${user.department} — Business Standard covers desktop apps, email, and Teams at lower cost. Saves $23.50/user/mo.`);
+        } else if (hasMailboxData && usageRatio < th) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 E3");
+          newLicenses.push("Microsoft 365 Business Standard");
+          reasons.push(`E3 user at ${usageRatio.toFixed(0)}% in ${user.department} — E3's enterprise compliance and Windows Enterprise licensing are underutilized. Business Standard covers desktop apps, email, and Teams. Saves $23.50/user/mo.`);
+        }
       }
     }
 
-    if (r.downgradeUnderutilizedBizPremium.enabled && hasMailboxData) {
+    if (r.downgradeUnderutilizedBizPremium.enabled) {
       const th = ruleThreshold(r.downgradeUnderutilizedBizPremium);
-      if (scopeMatchesDept(r.downgradeUnderutilizedBizPremium, user.department) && newLicenses.includes("Microsoft 365 Business Premium") && usageRatio < th) {
-        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Premium");
-        newLicenses.push("Microsoft 365 Business Standard");
-        reasons.push(`Business Premium in ${user.department} at ${usageRatio.toFixed(0)}% — Intune and Defender capabilities are underutilized. Standard retains desktop apps and collaboration tools. Saves $9.50/user/mo.`);
+      if (scopeMatchesDept(r.downgradeUnderutilizedBizPremium, user.department) && newLicenses.includes("Microsoft 365 Business Premium")) {
+        if (hasActivityData && isFullyInactive && hasMailboxData && usageRatio < th) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Premium");
+          newLicenses.push("Microsoft 365 Business Standard");
+          reasons.push(`Business Premium user with no activity in 30 days — Intune and Defender capabilities unused. Standard retains desktop apps and collaboration tools. Saves $9.50/user/mo.`);
+        } else if (hasMailboxData && usageRatio < th) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Premium");
+          newLicenses.push("Microsoft 365 Business Standard");
+          reasons.push(`Business Premium in ${user.department} at ${usageRatio.toFixed(0)}% — Intune and Defender capabilities are underutilized. Standard retains desktop apps and collaboration tools. Saves $9.50/user/mo.`);
+        }
       }
     }
 
-    if (r.downgradeBizStandardToBasic.enabled && hasMailboxData) {
+    if (r.downgradeBizStandardToBasic.enabled) {
       const th = ruleThreshold(r.downgradeBizStandardToBasic);
-      if (scopeMatchesDept(r.downgradeBizStandardToBasic, user.department) && newLicenses.includes("Microsoft 365 Business Standard") && usageRatio < th) {
-        newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Standard");
-        newLicenses.push("Microsoft 365 Business Basic");
-        reasons.push(`Standard at ${usageRatio.toFixed(0)}% in ${user.department} — desktop Office apps are likely unused at this activity level. Basic provides full web/mobile access to Outlook, Teams, and OneDrive. Saves $6.50/user/mo.`);
+      if (scopeMatchesDept(r.downgradeBizStandardToBasic, user.department) && newLicenses.includes("Microsoft 365 Business Standard")) {
+        if (hasActivityData && isFullyInactive && hasMailboxData && usageRatio < th) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Standard");
+          newLicenses.push("Microsoft 365 Business Basic");
+          reasons.push(`Standard user with no activity in 30 days — desktop Office apps unused. Basic provides web/mobile access to Outlook, Teams, and OneDrive. Saves $6.50/user/mo.`);
+        } else if (hasMailboxData && usageRatio < th) {
+          newLicenses = newLicenses.filter(l => l !== "Microsoft 365 Business Standard");
+          newLicenses.push("Microsoft 365 Business Basic");
+          reasons.push(`Standard at ${usageRatio.toFixed(0)}% in ${user.department} — desktop Office apps are likely unused at this activity level. Basic provides full web/mobile access to Outlook, Teams, and OneDrive. Saves $6.50/user/mo.`);
+        }
       }
     }
 
@@ -857,9 +969,12 @@ export default function Dashboard() {
         newLicenses = newLicenses.filter(l => l !== "Visio Plan 2");
         reasons.push(`Visio Plan 2 ($15/mo) assigned to ${user.department} — diagramming tools are typically used by Engineering, Architecture, and PMO. Consider reassigning or removing to avoid license waste.`);
       }
-      if (newLicenses.includes("Project Plan 3") && hasMailboxData && usageRatio < effThreshold && !["PMO", "IT", "Engineering"].includes(user.department)) {
-        newLicenses = newLicenses.filter(l => l !== "Project Plan 3");
-        reasons.push(`Project Plan 3 ($30/mo) with low activity in ${user.department} — no evidence of active project management usage. Planner (included in suite) covers basic task management needs.`);
+      if (newLicenses.includes("Project Plan 3") && !["PMO", "IT", "Engineering"].includes(user.department)) {
+        const removeProject = hasActivityData ? isLowActivity || isFullyInactive : (hasMailboxData && usageRatio < effThreshold);
+        if (removeProject) {
+          newLicenses = newLicenses.filter(l => l !== "Project Plan 3");
+          reasons.push(`Project Plan 3 ($30/mo) with low activity in ${user.department} — no evidence of active project management usage. Planner (included in suite) covers basic task management needs.`);
+        }
       }
       if (newLicenses.includes("Project Plan 5") && !["PMO", "IT"].includes(user.department)) {
         newLicenses = newLicenses.filter(l => l !== "Project Plan 5");
@@ -909,7 +1024,8 @@ export default function Dashboard() {
         "Microsoft 365 E3", "Microsoft 365 E5", "Office 365 E3", "Office 365 E5",
         "Microsoft 365 Business Basic", "Microsoft 365 Business Standard", "Microsoft 365 Business Premium",
       ].includes(l));
-      if (hasSuiteWithExchange && newLicenses.includes("Exchange Online Plan 1")) {
+      const hasF3Only = newLicenses.includes("Microsoft 365 F3") || newLicenses.includes("Office 365 F3");
+      if (hasSuiteWithExchange && newLicenses.includes("Exchange Online Plan 1") && !hasF3Only) {
         newLicenses = newLicenses.filter(l => l !== "Exchange Online Plan 1");
         reasons.push(`Exchange Online Plan 1 ($4/mo) is redundant — the suite license already provides Exchange Online with equal or greater mailbox capacity. Likely a leftover from migration.`);
       }
@@ -935,13 +1051,14 @@ export default function Dashboard() {
 
     if (r.addCopilotPowerUsers) {
       const powerUserDepts = new Set(["Engineering", "IT", "Design", "Analytics"]);
-      if (powerUserDepts.has(user.department) && hasMailboxData && usageRatio > 50 && !newLicenses.includes("GitHub Copilot") && !newLicenses.includes("Microsoft 365 Copilot")) {
+      const copilotEligible = hasActivityData ? usesFullSuite : (hasMailboxData && usageRatio > 50);
+      if (powerUserDepts.has(user.department) && copilotEligible && !newLicenses.includes("GitHub Copilot") && !newLicenses.includes("Microsoft 365 Copilot")) {
         if (user.department === "Engineering") {
           newLicenses.push("GitHub Copilot");
           reasons.push(`High-engagement Engineering user — GitHub Copilot delivers 30-55% developer productivity gains per industry benchmarks. ROI typically exceeds cost within the first month of adoption.`);
         } else {
           newLicenses.push("Microsoft 365 Copilot");
-          reasons.push(`Power user in ${user.department} with ${usageRatio.toFixed(0)}% engagement — M365 Copilot accelerates document drafting, email triage, and meeting summaries. Best ROI for high-activity knowledge workers.`);
+          reasons.push(`Power user in ${user.department} with ${hasActivityData ? act!.activeServiceCount + " active services" : usageRatio.toFixed(0) + "% engagement"} — M365 Copilot accelerates document drafting, email triage, and meeting summaries. Best ROI for high-activity knowledge workers.`);
         }
       }
     }
@@ -1326,6 +1443,52 @@ export default function Dashboard() {
                     Upload Active Users first
                   </p>
                 )}
+              </div>
+            </div>
+            <div className="mt-4">
+              <div className="border border-dashed border-border rounded-lg p-4 bg-background/50">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-sm font-medium">Service Activity Report</div>
+                    <Badge variant="secondary" className="text-[10px]">Recommended</Badge>
+                  </div>
+                  {uploadedActivityFile && (
+                    <Badge variant="outline" className="text-xs text-green-600 border-green-300">{uploadedActivityFile}</Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  M365 Admin Center &rarr; Reports &rarr; Usage &rarr; Active Users &rarr; Active User Detail (30 days) &rarr; Export
+                </p>
+                <input
+                  ref={activityFileRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xls"
+                  onChange={handleActivityFileUpload}
+                  className="hidden"
+                  data-testid="input-activity-file"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 w-full"
+                  onClick={() => activityFileRef.current?.click()}
+                  disabled={isUploading || dataSource === "none"}
+                  data-testid="button-upload-activity"
+                >
+                  {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {uploadedActivityFile ? "Replace file" : "Upload Activity Report CSV/XLSX"}
+                </Button>
+                {dataSource === "none" ? (
+                  <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                    <Info className="h-3 w-3" />
+                    Upload Active Users first
+                  </p>
+                ) : !uploadedActivityFile && dataSource !== "microsoft" ? (
+                  <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    Without activity data, recommendations rely on mailbox usage only
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>

@@ -129,6 +129,43 @@ export async function deleteReport(id: number) {
   queryClient.invalidateQueries({ queryKey: ["/api/reports"] });
 }
 
+export interface UserActivity {
+  exchangeActive: boolean;
+  oneDriveActive: boolean;
+  sharePointActive: boolean;
+  teamsActive: boolean;
+  yammerActive: boolean;
+  skypeActive: boolean;
+  exchangeLastDate: string | null;
+  oneDriveLastDate: string | null;
+  sharePointLastDate: string | null;
+  teamsLastDate: string | null;
+  yammerLastDate: string | null;
+  skypeLastDate: string | null;
+  activeServiceCount: number;
+  totalServiceCount: number;
+  daysSinceLastActivity: number | null;
+}
+
+export async function uploadActivityFile(file: File): Promise<{
+  activityData: Record<string, UserActivity>;
+  source: string;
+  fileName: string;
+  totalUsers: number;
+}> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch("/api/upload/activity", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Failed to parse activity file");
+  }
+  return res.json();
+}
+
 export async function fetchSummary(reportId: number) {
   const res = await fetch(`/api/reports/${reportId}/summary`);
   if (!res.ok) return null;

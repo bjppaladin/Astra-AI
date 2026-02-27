@@ -18,6 +18,24 @@ import {
 } from "./microsoft-graph";
 import { isAuthenticated } from "./replit_integrations/auth";
 
+export interface UserActivity {
+  exchangeActive: boolean;
+  oneDriveActive: boolean;
+  sharePointActive: boolean;
+  teamsActive: boolean;
+  yammerActive: boolean;
+  skypeActive: boolean;
+  exchangeLastDate: string | null;
+  oneDriveLastDate: string | null;
+  sharePointLastDate: string | null;
+  teamsLastDate: string | null;
+  yammerLastDate: string | null;
+  skypeLastDate: string | null;
+  activeServiceCount: number;
+  totalServiceCount: number;
+  daysSinceLastActivity: number | null;
+}
+
 const openrouter = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
   baseURL: "https://openrouter.ai/api/v1",
@@ -375,6 +393,7 @@ export async function registerRoutes(
           usageGB: 0,
           maxGB: 50,
           status: "Active",
+          activity: null,
         });
       }
 
@@ -459,6 +478,135 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/upload/activity", isAuthenticated, upload.single("file"), (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+      const rows = parseFileToRows(req.file.buffer, req.file.originalname);
+      if (rows.length < 2) return res.status(400).json({ error: "File appears empty or has no data rows" });
+
+      const headers = rows[0];
+
+      const upnIdx = findColumnIndex(headers, "user principal name", "upn", "email");
+      const exchangeDateIdx = findColumnIndex(headers, "exchange last activity date");
+      const oneDriveDateIdx = findColumnIndex(headers, "onedrive last activity date");
+      const sharePointDateIdx = findColumnIndex(headers, "sharepoint last activity date");
+      const teamsDateIdx = findColumnIndex(headers, "teams last activity date");
+      const yammerDateIdx = findColumnIndex(headers, "yammer last activity date");
+      const skypeDateIdx = findColumnIndex(headers, "skype for business last activity date");
+
+      const hasExchangeLicIdx = findColumnIndex(headers, "has exchange license");
+      const hasOneDriveLicIdx = findColumnIndex(headers, "has onedrive license");
+      const hasSharePointLicIdx = findColumnIndex(headers, "has sharepoint license");
+      const hasTeamsLicIdx = findColumnIndex(headers, "has teams license");
+      const hasYammerLicIdx = findColumnIndex(headers, "has yammer license");
+      const hasSkypeLicIdx = findColumnIndex(headers, "has skype for business license");
+
+      if (upnIdx === -1) {
+        return res.status(400).json({
+          error: "Could not find 'User Principal Name' column. Please upload the Active User Detail report from M365 Admin Center.",
+          detectedColumns: headers,
+        });
+      }
+
+      const hasAtLeastOneActivityCol = [exchangeDateIdx, oneDriveDateIdx, sharePointDateIdx, teamsDateIdx, yammerDateIdx, skypeDateIdx].some(idx => idx !== -1);
+      if (!hasAtLeastOneActivityCol) {
+        return res.status(400).json({
+          error: "Could not find any activity date columns (Exchange, OneDrive, SharePoint, Teams, Yammer, Skype). Please upload the Active User Detail report.",
+          detectedColumns: headers,
+        });
+      }
+
+      const activityData: Record<string, UserActivity> = {};
+      const now = new Date();
+
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length < 2) continue;
+
+        const upn = row[upnIdx]?.toLowerCase()?.trim();
+        if (!upn) continue;
+
+        const getDate = (idx: number): string | null => {
+          if (idx === -1) return null;
+          const val = row[idx]?.trim();
+          if (!val || val === "" || val === "-" || val.toLowerCase() === "n/a") return null;
+          return val;
+        };
+
+        const hasLicense = (idx: number): boolean => {
+          if (idx === -1) return false;
+          const val = row[idx]?.toLowerCase()?.trim();
+          return val === "yes" || val === "true";
+        };
+
+        const exchangeLastDate = getDate(exchangeDateIdx);
+        const oneDriveLastDate = getDate(oneDriveDateIdx);
+        const sharePointLastDate = getDate(sharePointDateIdx);
+        const teamsLastDate = getDate(teamsDateIdx);
+        const yammerLastDate = getDate(yammerDateIdx);
+        const skypeLastDate = getDate(skypeDateIdx);
+
+        const exchangeActive = !!exchangeLastDate;
+        const oneDriveActive = !!oneDriveLastDate;
+        const sharePointActive = !!sharePointLastDate;
+        const teamsActive = !!teamsLastDate;
+        const yammerActive = !!yammerLastDate;
+        const skypeActive = !!skypeLastDate;
+
+        const hasExLic = hasLicense(hasExchangeLicIdx);
+        const hasOdLic = hasLicense(hasOneDriveLicIdx);
+        const hasSpLic = hasLicense(hasSharePointLicIdx);
+        const hasTmLic = hasLicense(hasTeamsLicIdx);
+        const hasYmLic = hasLicense(hasYammerLicIdx);
+        const hasSkLic = hasLicense(hasSkypeLicIdx);
+
+        const activeServices = [exchangeActive, oneDriveActive, sharePointActive, teamsActive, yammerActive, skypeActive].filter(Boolean).length;
+        const totalServices = [hasExLic, hasOdLic, hasSpLic, hasTmLic, hasYmLic, hasSkLic].filter(Boolean).length || [exchangeActive, oneDriveActive, sharePointActive, teamsActive, yammerActive, skypeActive].filter(Boolean).length || 1;
+
+        const allDates = [exchangeLastDate, oneDriveLastDate, sharePointLastDate, teamsLastDate, yammerLastDate, skypeLastDate].filter(Boolean) as string[];
+        let daysSinceLastActivity: number | null = null;
+        if (allDates.length > 0) {
+          const mostRecent = allDates.map(d => new Date(d).getTime()).reduce((a, b) => Math.max(a, b), 0);
+          daysSinceLastActivity = Math.floor((now.getTime() - mostRecent) / (1000 * 60 * 60 * 24));
+          if (daysSinceLastActivity < 0) daysSinceLastActivity = 0;
+        }
+
+        activityData[upn] = {
+          exchangeActive,
+          oneDriveActive,
+          sharePointActive,
+          teamsActive,
+          yammerActive,
+          skypeActive,
+          exchangeLastDate,
+          oneDriveLastDate,
+          sharePointLastDate,
+          teamsLastDate,
+          yammerLastDate,
+          skypeLastDate,
+          activeServiceCount: activeServices,
+          totalServiceCount: totalServices,
+          daysSinceLastActivity,
+        };
+      }
+
+      if (Object.keys(activityData).length === 0) {
+        return res.status(400).json({ error: "No activity data found in the file." });
+      }
+
+      res.json({
+        activityData,
+        source: "uploaded",
+        fileName: req.file.originalname,
+        totalUsers: Object.keys(activityData).length,
+      });
+    } catch (err: any) {
+      console.error("Activity upload parse error:", err);
+      res.status(400).json({ error: `Failed to parse file: ${err.message}` });
+    }
+  });
+
   app.get("/api/reports", isAuthenticated, async (_req, res) => {
     const reports = await storage.getReports();
     res.json(reports);
@@ -527,6 +675,37 @@ export async function registerRoutes(
       const criticalUsers = users.filter((u: any) => u.status === "Critical");
       const warningUsers = users.filter((u: any) => u.status === "Warning");
 
+      const usersWithActivity = users.filter((u: any) => u.activity);
+      const hasActivityData = usersWithActivity.length > 0;
+      let activitySection = "";
+      if (hasActivityData) {
+        const exchangeActiveCount = usersWithActivity.filter((u: any) => u.activity.exchangeActive).length;
+        const teamsActiveCount = usersWithActivity.filter((u: any) => u.activity.teamsActive).length;
+        const sharePointActiveCount = usersWithActivity.filter((u: any) => u.activity.sharePointActive).length;
+        const oneDriveActiveCount = usersWithActivity.filter((u: any) => u.activity.oneDriveActive).length;
+        const noActivityUsers = usersWithActivity.filter((u: any) => u.activity.activeServiceCount === 0);
+        const lowActivityHighLicense = usersWithActivity.filter((u: any) => u.activity.activeServiceCount <= 1 && u.activity.totalServiceCount >= 3);
+        const pct = (n: number) => ((n / usersWithActivity.length) * 100).toFixed(0);
+
+        activitySection = `
+═══════════════════════════════════════════════════
+SERVICE ACTIVITY ANALYSIS (30-day Active User Detail Report)
+═══════════════════════════════════════════════════
+Total Users with Activity Data: ${usersWithActivity.length}/${totalUsers}
+Exchange (Email) Active: ${exchangeActiveCount} users (${pct(exchangeActiveCount)}%)
+Teams Active: ${teamsActiveCount} users (${pct(teamsActiveCount)}%)
+SharePoint Active: ${sharePointActiveCount} users (${pct(sharePointActiveCount)}%)
+OneDrive Active: ${oneDriveActiveCount} users (${pct(oneDriveActiveCount)}%)
+Users with NO activity in 30 days: ${noActivityUsers.length} users${noActivityUsers.length > 0 ? ` — ${noActivityUsers.map((u: any) => u.displayName).join(", ")}` : ""}
+Users using ≤1 service but licensed for ≥3: ${lowActivityHighLicense.length} users${lowActivityHighLicense.length > 0 ? ` — ${lowActivityHighLicense.map((u: any) => `${u.displayName} (${u.activity.activeServiceCount}/${u.activity.totalServiceCount} services)`).join(", ")}` : ""}`;
+      } else {
+        activitySection = `
+═══════════════════════════════════════════════════
+SERVICE ACTIVITY ANALYSIS (30-day Active User Detail Report)
+═══════════════════════════════════════════════════
+No activity data available.`;
+      }
+
       const fmtDelta = (val: number) => `${val > 0 ? '+' : ''}$${val.toFixed(2)}`;
 
       const deptSummary = Object.entries(deptBreakdown)
@@ -570,6 +749,7 @@ Users Near Capacity (>80%): ${highUsageUsers.length} users${highUsageUsers.lengt
 Users With Minimal Usage (<10%): ${lowUsageUsers.length} users${lowUsageUsers.length > 0 ? ` — suggests potential over-licensing or inactive accounts` : ""}
 ${criticalUsers.length > 0 ? `Critical Status Users: ${criticalUsers.length} — ${criticalUsers.map((u: any) => u.displayName).join(", ")}` : ""}
 ${warningUsers.length > 0 ? `Warning Status Users: ${warningUsers.length} — ${warningUsers.map((u: any) => u.displayName).join(", ")}` : ""}
+${activitySection}
 
 ═══════════════════════════════════════════════════
 STRATEGY COST MODELS
@@ -583,7 +763,16 @@ ${costCustom !== undefined && costCustom !== null ? `CUSTOM STRATEGY:      $${co
 ═══════════════════════════════════════════════════
 FULL USER DIRECTORY
 ═══════════════════════════════════════════════════
-${users.map((u: any) => `• ${u.displayName} | ${u.upn || "N/A"} | ${u.department || "—"} | Licenses: ${u.licenses.join(", ")} | Mailbox: ${u.usageGB}GB/${u.maxGB}GB (${u.maxGB > 0 ? ((u.usageGB / u.maxGB) * 100).toFixed(0) : 0}%) | $${u.cost}/mo | Status: ${u.status || "Active"}`).join("\n")}
+${users.map((u: any) => {
+  const base = `• ${u.displayName} | ${u.upn || "N/A"} | ${u.department || "—"} | Licenses: ${u.licenses.join(", ")} | Mailbox: ${u.usageGB}GB/${u.maxGB}GB (${u.maxGB > 0 ? ((u.usageGB / u.maxGB) * 100).toFixed(0) : 0}%) | $${u.cost}/mo | Status: ${u.status || "Active"}`;
+  if (u.activity) {
+    const a = u.activity;
+    const services = [a.exchangeActive ? "Exchange✓" : "Exchange✗", a.teamsActive ? "Teams✓" : "Teams✗", a.sharePointActive ? "SharePoint✓" : "SharePoint✗", a.oneDriveActive ? "OneDrive✓" : "OneDrive✗"].join(" ");
+    const lastAct = a.daysSinceLastActivity !== null ? (a.daysSinceLastActivity === 0 ? "Today" : `${a.daysSinceLastActivity}d ago`) : "None in 30d";
+    return `${base} | Active Services: ${a.activeServiceCount}/${a.totalServiceCount} | ${services} | Last Activity: ${lastAct}`;
+  }
+  return `${base} | Activity: No data`;
+}).join("\n")}
 
 ═══════════════════════════════════════════════════
 DELIVERABLE INSTRUCTIONS
@@ -607,10 +796,22 @@ Write 3-4 sentences that a CEO can read in 30 seconds and immediately understand
 ### 2a. Licensing Landscape
 Analyze the license distribution across the organization. Identify patterns: are departments properly tiered? Are expensive E5 licenses going to users who don't need advanced security/compliance features? Are there users on E1 who may need more capabilities? Call out specific names, departments, and license mismatches.
 
-### 2b. Storage & Mailbox Health
+CRITICAL — USE ACTIVITY DATA: For each user where activity data is available, cross-reference their license tier against their actual service utilization. An E5 user only using Exchange and Teams is a clear downgrade candidate. An E3 user with zero activity in 30 days should be flagged for immediate review. Reference the Active Services count and specific service checkmarks (✓/✗) from the user directory.
+
+### 2b. Service Utilization Analysis
+Analyze per-user activity signals from the 30-day Active User Detail Report. For each user with activity data, assess:
+- Which services they actively use vs. which they are licensed for
+- Users with no activity in 30 days (fully inactive) — flag for license removal or downgrade to F3/F1
+- Users using only Exchange (email-only) — flag for downgrade to F3 + Exchange Online Plan 1 or lower tier
+- Users using ≤1 service but licensed for ≥3 — flag as over-licensed
+- Users actively using 4+ services — confirm they are on an appropriate tier
+- Per-service adoption rates and what they reveal about organizational tool adoption
+If no activity data is available, note that activity data was not provided and recommendations are based on mailbox usage only.
+
+### 2c. Storage & Mailbox Health
 Analyze mailbox utilization. Identify users approaching capacity who need attention. Flag users with minimal usage that suggest over-provisioning or inactive accounts. Reference specific users and percentages.
 
-### 2c. Cost Distribution by Department
+### 2d. Cost Distribution by Department
 Break down spending by department. Identify which departments are driving the most cost and whether that spend is justified by their role/needs.
 
 ## 3. Strategy Analysis
@@ -634,6 +835,7 @@ Include Current State as the baseline row.
 - What capabilities are lost and who is impacted
 - Acceptable risk tradeoffs vs. unacceptable ones
 - Which cost removals are "no-brainers" vs. which carry risk
+- CRITICAL: Use activity data to justify each downgrade. Reference specific users' active service counts, which services they use/don't use, and days since last activity. For example: "Jessica Taylor (E5, $57/mo) only uses Exchange and Teams (2/5 services active) — downgrade to E3 saves $21/mo with no functionality loss." For inactive users, recommend F3 + Exchange Online Plan 1 ($12/mo) as a frontline alternative to E3 ($36/mo) or E5 ($57/mo).
 
 ### 3d. Balanced Approach — Deep Dive
 - The "sweet spot" rationale: how this strategy cherry-picks the best of both

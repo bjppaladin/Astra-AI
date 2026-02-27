@@ -226,6 +226,140 @@ export async function fetchMailboxUsage(accessToken: string): Promise<Map<string
   return result;
 }
 
+export interface UserActivity {
+  exchangeActive: boolean;
+  oneDriveActive: boolean;
+  sharePointActive: boolean;
+  teamsActive: boolean;
+  yammerActive: boolean;
+  skypeActive: boolean;
+  exchangeLastDate: string | null;
+  oneDriveLastDate: string | null;
+  sharePointLastDate: string | null;
+  teamsLastDate: string | null;
+  yammerLastDate: string | null;
+  skypeLastDate: string | null;
+  activeServiceCount: number;
+  totalServiceCount: number;
+  daysSinceLastActivity: number | null;
+}
+
+export async function fetchUserActivityMap(accessToken: string): Promise<Map<string, UserActivity>> {
+  let csvData: string;
+  try {
+    csvData = await graphFetch(accessToken, `${GRAPH_BETA}/reports/getOffice365ActiveUserDetail(period='D30')?$format=text/csv`, true);
+  } catch {
+    return new Map();
+  }
+
+  const lines = (csvData as string).split("\n").filter((l: string) => l.trim());
+  if (lines.length < 2) return new Map();
+
+  const headers = parseCSVLine(lines[0]);
+  const findCol = (keyword: string) => headers.findIndex((h) => h.toLowerCase().includes(keyword.toLowerCase()));
+
+  const upnIdx = findCol("user principal name");
+  if (upnIdx === -1) return new Map();
+
+  const exchangeDateIdx = findCol("exchange last activity date");
+  const oneDriveDateIdx = findCol("onedrive last activity date");
+  const sharePointDateIdx = findCol("sharepoint last activity date");
+  const teamsDateIdx = findCol("teams last activity date");
+  const yammerDateIdx = findCol("yammer last activity date");
+  const skypeDateIdx = findCol("skype for business last activity date");
+
+  const hasExchangeLicIdx = findCol("has exchange license");
+  const hasOneDriveLicIdx = findCol("has onedrive license");
+  const hasSharePointLicIdx = findCol("has sharepoint license");
+  const hasTeamsLicIdx = findCol("has teams license");
+  const hasYammerLicIdx = findCol("has yammer license");
+  const hasSkypeLicIdx = findCol("has skype for business license");
+
+  const result = new Map<string, UserActivity>();
+  const now = new Date();
+
+  for (let i = 1; i < lines.length; i++) {
+    const fields = parseCSVLine(lines[i]);
+    if (fields.length <= upnIdx) continue;
+
+    const upn = fields[upnIdx]?.trim();
+    if (!upn) continue;
+
+    const getDate = (idx: number): string | null => {
+      if (idx === -1 || idx >= fields.length) return null;
+      const val = fields[idx]?.trim();
+      return val && val !== "" ? val : null;
+    };
+
+    const isActive = (dateStr: string | null): boolean => {
+      return dateStr !== null && dateStr !== "";
+    };
+
+    const hasLicense = (idx: number): boolean => {
+      if (idx === -1 || idx >= fields.length) return false;
+      return fields[idx]?.trim().toLowerCase() === "true";
+    };
+
+    const exchangeLastDate = getDate(exchangeDateIdx);
+    const oneDriveLastDate = getDate(oneDriveDateIdx);
+    const sharePointLastDate = getDate(sharePointDateIdx);
+    const teamsLastDate = getDate(teamsDateIdx);
+    const yammerLastDate = getDate(yammerDateIdx);
+    const skypeLastDate = getDate(skypeDateIdx);
+
+    const exchangeActive = isActive(exchangeLastDate);
+    const oneDriveActive = isActive(oneDriveLastDate);
+    const sharePointActive = isActive(sharePointLastDate);
+    const teamsActive = isActive(teamsLastDate);
+    const yammerActive = isActive(yammerLastDate);
+    const skypeActive = isActive(skypeLastDate);
+
+    const activeServices = [exchangeActive, oneDriveActive, sharePointActive, teamsActive, yammerActive, skypeActive];
+    const activeServiceCount = activeServices.filter(Boolean).length;
+
+    const licensedServices = [
+      hasLicense(hasExchangeLicIdx),
+      hasLicense(hasOneDriveLicIdx),
+      hasLicense(hasSharePointLicIdx),
+      hasLicense(hasTeamsLicIdx),
+      hasLicense(hasYammerLicIdx),
+      hasLicense(hasSkypeLicIdx),
+    ];
+    const totalServiceCount = Math.max(licensedServices.filter(Boolean).length, activeServiceCount, 1);
+
+    const allDates = [exchangeLastDate, oneDriveLastDate, sharePointLastDate, teamsLastDate, yammerLastDate, skypeLastDate]
+      .filter((d): d is string => d !== null)
+      .map((d) => new Date(d).getTime())
+      .filter((t) => !isNaN(t));
+
+    let daysSinceLastActivity: number | null = null;
+    if (allDates.length > 0) {
+      const mostRecent = Math.max(...allDates);
+      daysSinceLastActivity = Math.floor((now.getTime() - mostRecent) / (1000 * 60 * 60 * 24));
+    }
+
+    result.set(upn.toLowerCase(), {
+      exchangeActive,
+      oneDriveActive,
+      sharePointActive,
+      teamsActive,
+      yammerActive,
+      skypeActive,
+      exchangeLastDate,
+      oneDriveLastDate,
+      sharePointLastDate,
+      teamsLastDate,
+      yammerLastDate,
+      skypeLastDate,
+      activeServiceCount,
+      totalServiceCount,
+      daysSinceLastActivity,
+    });
+  }
+
+  return result;
+}
+
 export async function fetchActiveUserDetailReport(accessToken: string): Promise<any[]> {
   let csvData: string;
   try {
@@ -276,13 +410,15 @@ export async function fetchSubscribedSkus(accessToken: string): Promise<any[]> {
 }
 
 export async function fetchM365Data(accessToken: string): Promise<any[]> {
-  const [users, mailboxMap] = await Promise.all([
+  const [users, mailboxMap, activityMap] = await Promise.all([
     fetchLicensedUsers(accessToken),
     fetchMailboxUsage(accessToken),
+    fetchUserActivityMap(accessToken),
   ]);
 
   return users.map((user) => {
     const mailbox = mailboxMap.get(user.upn.toLowerCase());
+    const activity = activityMap.get(user.upn.toLowerCase()) ?? null;
     return {
       ...user,
       usageGB: mailbox?.usageGB ?? 0,
@@ -291,6 +427,7 @@ export async function fetchM365Data(accessToken: string): Promise<any[]> {
         ? mailbox.usageGB / mailbox.maxGB > 0.9 ? "Critical"
           : mailbox.usageGB / mailbox.maxGB > 0.7 ? "Warning" : "Active"
         : "Active",
+      activity,
     };
   });
 }
